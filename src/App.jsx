@@ -1,9 +1,8 @@
 import React, { useRef, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, BrowserRouter, Routes, Route } from "react-router-dom";
 import axios from "axios";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ReactDOM from "react-dom/client";
-import "./App.css"; // Импорт стилей
+import "./App.css";
 
 // API Configuration
 const API_CONFIG = {
