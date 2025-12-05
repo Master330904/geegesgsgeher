@@ -3,6 +3,7 @@ import { useParams, BrowserRouter, Routes, Route } from "react-router-dom";
 import axios from "axios";
 import ReactDOM from "react-dom/client";
 import "./App.css";
+export default App;
 
 // API Configuration
 const API_CONFIG = {
