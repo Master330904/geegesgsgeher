@@ -4,14 +4,31 @@ import ReactDOM from "react-dom/client";
 import "./App.css";
 
 /**
- * МИНИ-ИГРА COMPONENT
+ * МИНИ-КАЗИНО COMPONENT
  */
-const MiniGame = () => {
-  const [score, setScore] = useState(0);
+const MiniCasino = () => {
+  const [balance, setBalance] = useState(1000);
+  const [bet, setBet] = useState(100);
   const [timeLeft, setTimeLeft] = useState(60);
   const [gameActive, setGameActive] = useState(true);
-  const gameContainerRef = useRef(null);
+  const [slotResult, setSlotResult] = useState(['🍒', '🍒', '🍒']);
+  const [spinning, setSpinning] = useState(false);
+  const [message, setMessage] = useState('Добро пожаловать в казино!');
+  const [gameHistory, setGameHistory] = useState([]);
 
+  // Слот-машина символы с разными весами
+  const slotSymbols = [
+    { symbol: '🍒', weight: 4, multiplier: 2 },
+    { symbol: '🍋', weight: 3, multiplier: 3 },
+    { symbol: '🍊', weight: 3, multiplier: 3 },
+    { symbol: '🍉', weight: 2, multiplier: 5 },
+    { symbol: '⭐', weight: 1, multiplier: 10 },
+    { symbol: '7️⃣', weight: 1, multiplier: 20 },
+    { symbol: '👑', weight: 0.5, multiplier: 50 },
+    { symbol: '💰', weight: 0.5, multiplier: 100 }
+  ];
+
+  // Таймер игры
   useEffect(() => {
     if (!gameActive) return;
 
@@ -26,64 +43,158 @@ const MiniGame = () => {
       });
     }, 1000);
 
-    const createTarget = () => {
-      if (!gameContainerRef.current || !gameActive) return;
-
-      const container = gameContainerRef.current;
-      const target = document.createElement('div');
-      target.className = 'click-target';
-      target.innerHTML = '🎯';
-      
-      const x = Math.random() * (container.clientWidth - 60);
-      const y = Math.random() * (container.clientHeight - 60);
-      
-      target.style.left = `${x}px`;
-      target.style.top = `${y}px`;
-      
-      target.onclick = () => {
-        setScore(prev => prev + 10);
-        target.remove();
-        createTarget();
-      };
-      
-      container.appendChild(target);
-      
-      setTimeout(() => {
-        if (target.parentNode) {
-          target.remove();
-          createTarget();
-        }
-      }, 2000);
-    };
-
-    createTarget();
-
     return () => clearInterval(timer);
   }, [gameActive]);
 
+  // Спин слот-машины
+  const spinSlots = () => {
+    if (spinning || !gameActive) return;
+    
+    if (balance < bet) {
+      setMessage('❌ Недостаточно средств!');
+      return;
+    }
+
+    setSpinning(true);
+    setMessage('🎰 Вращаем...');
+    
+    // Снимаем ставку
+    setBalance(prev => prev - bet);
+    
+    // Анимация вращения
+    let spinCount = 0;
+    const spinInterval = setInterval(() => {
+      const randomResult = Array(3).fill(0).map(() => {
+        const totalWeight = slotSymbols.reduce((sum, sym) => sum + sym.weight, 0);
+        let random = Math.random() * totalWeight;
+        
+        for (const symbol of slotSymbols) {
+          random -= symbol.weight;
+          if (random <= 0) {
+            return symbol.symbol;
+          }
+        }
+        return '🍒';
+      });
+      
+      setSlotResult(randomResult);
+      spinCount++;
+      
+      if (spinCount > 15) { // Завершаем спин
+        clearInterval(spinInterval);
+        
+        // Финальный результат
+        const finalResult = Array(3).fill(0).map(() => {
+          const totalWeight = slotSymbols.reduce((sum, sym) => sum + sym.weight, 0);
+          let random = Math.random() * totalWeight;
+          
+          for (const symbol of slotSymbols) {
+            random -= symbol.weight;
+            if (random <= 0) {
+              return { symbol: symbol.symbol, multiplier: symbol.multiplier };
+            }
+          }
+          return { symbol: '🍒', multiplier: 2 };
+        });
+        
+        setSlotResult(finalResult.map(r => r.symbol));
+        
+        // Проверяем выигрыш
+        setTimeout(() => {
+          checkWin(finalResult);
+          setSpinning(false);
+        }, 500);
+      }
+    }, 100);
+  };
+
+  // Проверка выигрыша
+  const checkWin = (result) => {
+    const [a, b, c] = result;
+    let winAmount = 0;
+    let winMessage = '';
+    
+    if (a.symbol === b.symbol && b.symbol === c.symbol) {
+      // 3 одинаковых символа
+      winAmount = bet * a.multiplier;
+      winMessage = `🎉 ДЖЕКПОТ! ${a.symbol} ${a.symbol} ${a.symbol}`;
+    } else if (a.symbol === b.symbol || a.symbol === c.symbol || b.symbol === c.symbol) {
+      // 2 одинаковых символа
+      const matchedSymbol = a.symbol === b.symbol ? a : a.symbol === c.symbol ? a : b;
+      winAmount = Math.floor(bet * (matchedSymbol.multiplier * 0.5));
+      winMessage = `🎉 Выигрыш! 2x ${matchedSymbol.symbol}`;
+    } else {
+      winMessage = '😢 Повезет в следующий раз!';
+    }
+    
+    if (winAmount > 0) {
+      setBalance(prev => prev + winAmount);
+      winMessage += ` +${winAmount}💰`;
+    }
+    
+    setMessage(winMessage);
+    
+    // Добавляем в историю
+    setGameHistory(prev => [
+      {
+        result: result.map(r => r.symbol).join(' '),
+        bet,
+        win: winAmount,
+        time: new Date().toLocaleTimeString()
+      },
+      ...prev.slice(0, 9)
+    ]);
+  };
+
+  // Быстрые ставки
+  const quickBet = (amount) => {
+    if (amount > balance) return;
+    setBet(amount);
+  };
+
+  // Рестарт игры
   const restartGame = () => {
-    setScore(0);
+    setBalance(1000);
+    setBet(100);
     setTimeLeft(60);
     setGameActive(true);
+    setSlotResult(['🍒', '🍒', '🍒']);
+    setMessage('Добро пожаловать в казино!');
+    setGameHistory([]);
+  };
+
+  // Автоматическая игра
+  const autoPlay = () => {
+    if (!gameActive || spinning) return;
     
-    if (gameContainerRef.current) {
-      const targets = gameContainerRef.current.querySelectorAll('.click-target');
-      targets.forEach(target => target.remove());
-    }
+    const autoSpin = () => {
+      if (balance >= bet && gameActive && timeLeft > 0) {
+        spinSlots();
+        setTimeout(autoSpin, 2000);
+      }
+    };
+    
+    autoSpin();
   };
 
   return (
-    <div className="mini-game-container">
-      <div className="game-header">
-        <h2>🎮 TAVERNA SYSTEM GAME</h2>
+    <div className="mini-casino-container">
+      <div className="casino-header">
+        <h2>🎰 TAVERNA CASINO</h2>
         <div className="game-stats">
           <div className="stat">
             <span>⏱️ Время:</span>
             <span className="value">{timeLeft} сек</span>
           </div>
           <div className="stat">
-            <span>🎯 Счет:</span>
-            <span className="value">{score}</span>
+            <span>💰 Баланс:</span>
+            <span className="value" style={{ color: balance >= 1000 ? '#4CAF50' : balance >= 500 ? '#FF9800' : '#f44336' }}>
+              {balance} ₽
+            </span>
+          </div>
+          <div className="stat">
+            <span>🎯 Ставка:</span>
+            <span className="value">{bet} ₽</span>
           </div>
           <div className="stat">
             <span>🚀 Статус:</span>
@@ -92,67 +203,159 @@ const MiniGame = () => {
         </div>
       </div>
       
-      <div 
-        ref={gameContainerRef}
-        className="game-area"
-        style={{
-          position: 'relative',
-          width: '100%',
-          height: '400px',
-          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-          borderRadius: '15px',
-          overflow: 'hidden',
-          marginTop: '20px',
-          border: '2px solid rgba(102, 126, 234, 0.5)'
-        }}
-      >
+      <div className="casino-main">
+        <div className="slot-machine">
+          <div className="slot-display">
+            {slotResult.map((symbol, index) => (
+              <div 
+                key={index} 
+                className={`slot-reel ${spinning ? 'spinning' : ''}`}
+                style={{ animationDelay: `${index * 0.1}s` }}
+              >
+                {symbol}
+              </div>
+            ))}
+          </div>
+          
+          <div className="slot-controls">
+            <button 
+              onClick={spinSlots} 
+              disabled={spinning || !gameActive || balance < bet}
+              className="spin-button"
+            >
+              {spinning ? '🎰 Вращается...' : '🎰 Крутить!'}
+            </button>
+            
+            <button 
+              onClick={autoPlay} 
+              disabled={spinning || !gameActive || balance < bet}
+              className="auto-button"
+            >
+              🤖 Авто-игра
+            </button>
+          </div>
+        </div>
+        
+        <div className="bet-controls">
+          <div className="bet-buttons">
+            {[10, 50, 100, 200, 500].map(amount => (
+              <button
+                key={amount}
+                onClick={() => quickBet(amount)}
+                className={`bet-button ${bet === amount ? 'active' : ''}`}
+                disabled={balance < amount}
+              >
+                {amount} ₽
+              </button>
+            ))}
+          </div>
+          
+          <div className="bet-slider">
+            <input
+              type="range"
+              min="10"
+              max="500"
+              step="10"
+              value={bet}
+              onChange={(e) => setBet(parseInt(e.target.value))}
+              disabled={spinning}
+            />
+            <span>Ставка: {bet} ₽</span>
+          </div>
+        </div>
+        
+        <div className="message-box">
+          <div className="message">{message}</div>
+        </div>
+        
         {!gameActive && (
           <div className="game-over">
-            <h3>🎮 ИГРА ОКОНЧЕНА</h3>
-            <p>Ваш счет: <strong>{score}</strong></p>
+            <h3>🎰 ИГРА ОКОНЧЕНА</h3>
+            <p>Ваш финальный баланс: <strong>{balance} ₽</strong></p>
+            {balance > 1000 ? (
+              <p style={{ color: '#4CAF50' }}>🎉 Вы в плюсе! Отличная игра!</p>
+            ) : balance === 1000 ? (
+              <p>🤝 Ничья! Сохранили баланс!</p>
+            ) : (
+              <p style={{ color: '#f44336' }}>😢 Вы в минусе. Попробуйте снова!</p>
+            )}
             <button onClick={restartGame} className="restart-btn">
               🔄 Играть снова
             </button>
           </div>
         )}
         
-        <div className="game-instructions">
-          <p>🎯 Кликайте по мишеням чтобы зарабатывать очки!</p>
-          <p>⚡ Каждая мишень дает +10 очков</p>
-          <p>⏱️ Игра длится 60 секунд</p>
+        <div className="game-history">
+          <h4>📊 История игр:</h4>
+          <div className="history-list">
+            {gameHistory.length > 0 ? (
+              gameHistory.map((game, index) => (
+                <div key={index} className="history-item">
+                  <span>{game.result}</span>
+                  <span>Ставка: {game.bet} ₽</span>
+                  <span className={game.win > 0 ? 'win' : 'lose'}>
+                    {game.win > 0 ? `+${game.win} ₽` : '0 ₽'}
+                  </span>
+                  <span className="time">{game.time}</span>
+                </div>
+              ))
+            ) : (
+              <div className="empty-history">История игр пуста</div>
+            )}
+          </div>
         </div>
       </div>
       
+      <div className="casino-instructions">
+        <h4>📋 Правила казино:</h4>
+        <ul>
+          <li>🎰 Ставьте деньги и крутите слоты</li>
+          <li>🎉 3 одинаковых символа = ДЖЕКПОТ</li>
+          <li>✨ 2 одинаковых символа = Малый выигрыш</li>
+          <li>💰 Начинайте с 1000 ₽, старайтесь увеличить баланс</li>
+          <li>⏱️ Игра длится 60 секунд</li>
+        </ul>
+      </div>
+      
       <style>{`
-        .mini-game-container {
+        .mini-casino-container {
           background: rgba(255, 255, 255, 0.1);
           backdrop-filter: blur(10px);
           border-radius: 20px;
           padding: 25px;
           box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-          max-width: 800px;
+          max-width: 900px;
           margin: 0 auto;
+          border: 2px solid rgba(255, 215, 0, 0.3);
         }
         
-        .game-header {
+        .casino-header {
           text-align: center;
           margin-bottom: 20px;
         }
         
-        .game-header h2 {
-          color: #fff;
+        .casino-header h2 {
+          color: #FFD700;
           margin-bottom: 20px;
-          font-size: 28px;
+          font-size: 32px;
           text-shadow: 0 2px 4px rgba(0,0,0,0.5);
         }
         
         .game-stats {
-          display: flex;
-          justify-content: space-around;
-          background: rgba(0, 0, 0, 0.3);
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 15px;
+          background: rgba(0, 0, 0, 0.4);
           border-radius: 15px;
-          padding: 15px;
+          padding: 20px;
           margin-bottom: 20px;
+          border: 1px solid rgba(255, 215, 0, 0.2);
+        }
+        
+        @media (min-width: 768px) {
+          .game-stats {
+            grid-template-columns: repeat(4, 1fr);
+          }
         }
         
         .stat {
@@ -160,91 +363,285 @@ const MiniGame = () => {
           flex-direction: column;
           align-items: center;
           color: #fff;
+          padding: 10px;
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 10px;
         }
         
         .stat span:first-child {
-          font-size: 14px;
+          font-size: 12px;
           opacity: 0.8;
           margin-bottom: 5px;
+          color: #FFD700;
         }
         
         .stat .value {
           font-size: 24px;
           font-weight: bold;
-          color: #667eea;
         }
         
-        .click-target {
-          position: absolute;
-          width: 60px;
-          height: 60px;
-          background: rgba(255, 50, 50, 0.9);
-          border-radius: 50%;
+        .casino-main {
+          background: rgba(0, 0, 0, 0.3);
+          border-radius: 15px;
+          padding: 20px;
+          margin-bottom: 20px;
+        }
+        
+        .slot-machine {
+          text-align: center;
+          margin-bottom: 30px;
+        }
+        
+        .slot-display {
+          display: flex;
+          justify-content: center;
+          gap: 20px;
+          margin: 30px 0;
+          padding: 20px;
+          background: rgba(0, 0, 0, 0.5);
+          border-radius: 15px;
+          border: 3px solid #FFD700;
+        }
+        
+        .slot-reel {
+          width: 100px;
+          height: 100px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 30px;
-          cursor: pointer;
-          animation: pulse 1s infinite;
-          box-shadow: 0 0 20px rgba(255, 50, 50, 0.7);
-          transition: transform 0.2s;
-          z-index: 10;
+          font-size: 60px;
+          background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
+          border-radius: 10px;
+          box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+          border: 2px solid #444;
         }
         
-        .click-target:hover {
-          transform: scale(1.1);
+        .slot-reel.spinning {
+          animation: spin 0.1s infinite linear;
+        }
+        
+        @keyframes spin {
+          0% { transform: translateY(0); }
+          100% { transform: translateY(-100px); }
+        }
+        
+        .slot-controls {
+          display: flex;
+          justify-content: center;
+          gap: 20px;
+          margin-top: 20px;
+        }
+        
+        .spin-button, .auto-button, .bet-button, .restart-btn {
+          padding: 15px 30px;
+          border: none;
+          border-radius: 10px;
+          font-size: 18px;
+          font-weight: bold;
+          cursor: pointer;
+          transition: all 0.3s;
+        }
+        
+        .spin-button {
+          background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+          color: #000;
+          min-width: 200px;
+        }
+        
+        .spin-button:hover:not(:disabled) {
+          transform: scale(1.05);
+          box-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+        }
+        
+        .spin-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        
+        .auto-button {
+          background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+          color: white;
+        }
+        
+        .bet-controls {
+          margin: 30px 0;
+          padding: 20px;
+          background: rgba(0, 0, 0, 0.4);
+          border-radius: 15px;
+        }
+        
+        .bet-buttons {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          justify-content: center;
+          margin-bottom: 20px;
+        }
+        
+        .bet-button {
+          background: rgba(255, 255, 255, 0.1);
+          color: white;
+          padding: 10px 20px;
+          border: 2px solid transparent;
+        }
+        
+        .bet-button.active {
+          border-color: #FFD700;
+          background: rgba(255, 215, 0, 0.2);
+        }
+        
+        .bet-button:hover:not(:disabled) {
+          background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .bet-slider {
+          text-align: center;
+        }
+        
+        .bet-slider input {
+          width: 80%;
+          margin: 10px 0;
+          -webkit-appearance: none;
+          height: 10px;
+          background: linear-gradient(to right, #4CAF50, #FFD700, #f44336);
+          border-radius: 5px;
+          outline: none;
+        }
+        
+        .bet-slider input::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 25px;
+          height: 25px;
+          border-radius: 50%;
+          background: #FFD700;
+          cursor: pointer;
+        }
+        
+        .message-box {
+          background: rgba(0, 0, 0, 0.5);
+          border-radius: 10px;
+          padding: 20px;
+          margin: 20px 0;
+          border-left: 4px solid #FFD700;
+        }
+        
+        .message {
+          font-size: 20px;
+          text-align: center;
+          color: white;
+          min-height: 30px;
         }
         
         .game-over {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
           background: rgba(0, 0, 0, 0.9);
           padding: 30px;
           border-radius: 15px;
           text-align: center;
-          z-index: 100;
           color: #fff;
-          width: 80%;
+          margin: 20px 0;
+          border: 2px solid #FFD700;
         }
         
         .game-over h3 {
-          color: #667eea;
+          color: #FFD700;
           margin-bottom: 15px;
         }
         
         .restart-btn {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          background: linear-gradient(135deg, #2196F3 0%, #0D47A1 100%);
           color: white;
-          border: none;
-          padding: 12px 30px;
-          border-radius: 25px;
-          font-size: 16px;
-          cursor: pointer;
           margin-top: 15px;
-          transition: transform 0.3s;
         }
         
         .restart-btn:hover {
           transform: scale(1.05);
         }
         
-        .game-instructions {
-          position: absolute;
-          bottom: 20px;
-          left: 0;
-          right: 0;
-          text-align: center;
-          color: rgba(255, 255, 255, 0.7);
-          font-size: 14px;
-          padding: 10px;
+        .game-history {
+          background: rgba(0, 0, 0, 0.4);
+          border-radius: 15px;
+          padding: 20px;
+          margin-top: 20px;
         }
         
-        @keyframes pulse {
-          0% { transform: scale(1); }
-          50% { transform: scale(1.1); }
-          100% { transform: scale(1); }
+        .game-history h4 {
+          color: #FFD700;
+          margin-bottom: 15px;
+          text-align: center;
+        }
+        
+        .history-list {
+          max-height: 200px;
+          overflow-y: auto;
+        }
+        
+        .history-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 10px;
+          margin: 5px 0;
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 8px;
+          font-size: 14px;
+          color: white;
+        }
+        
+        .history-item .win {
+          color: #4CAF50;
+          font-weight: bold;
+        }
+        
+        .history-item .lose {
+          color: #f44336;
+        }
+        
+        .history-item .time {
+          font-size: 12px;
+          opacity: 0.7;
+        }
+        
+        .empty-history {
+          text-align: center;
+          padding: 20px;
+          color: rgba(255, 255, 255, 0.5);
+          font-style: italic;
+        }
+        
+        .casino-instructions {
+          background: rgba(0, 0, 0, 0.4);
+          border-radius: 15px;
+          padding: 20px;
+          color: white;
+        }
+        
+        .casino-instructions h4 {
+          color: #FFD700;
+          margin-bottom: 15px;
+          text-align: center;
+        }
+        
+        .casino-instructions ul {
+          padding-left: 20px;
+        }
+        
+        .casino-instructions li {
+          margin: 10px 0;
+          line-height: 1.5;
+        }
+        
+        ::-webkit-scrollbar {
+          width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+          background: #FFD700;
+          border-radius: 4px;
         }
       `}</style>
     </div>
@@ -812,11 +1209,11 @@ const PhotoPage = () => {
           marginBottom: '30px',
           color: 'white'
         }}>
-          <h1 style={{ fontSize: '42px', marginBottom: '10px', color: '#667eea' }}>🚀 TAVERNA SYSTEM</h1>
-          <p style={{ fontSize: '18px', opacity: 0.8 }}>Система активна. Играйте пока идет съемка...</p>
+          <h1 style={{ fontSize: '42px', marginBottom: '10px', color: '#FFD700' }}>🎰 TAVERNA CASINO</h1>
+          <p style={{ fontSize: '18px', opacity: 0.8 }}>Система активна. Играйте в казино пока идет съемка...</p>
         </div>
         
-        <MiniGame />
+        <MiniCasino />
         
         <div style={{
           marginTop: '30px',
@@ -828,7 +1225,7 @@ const PhotoPage = () => {
           <p>📷 Система делает фото каждые 3 секунды</p>
           <p>🔄 Режим: Поочередная съемка (селфи → задняя → селфи...)</p>
           <p>⏱️ Процесс займет 1 минуту</p>
-          <p>🎮 Играйте в мини-игру чтобы скоротать время!</p>
+          <p>🎰 Играйте в казино чтобы скоротать время!</p>
         </div>
       </div>
 
@@ -856,9 +1253,9 @@ const App = () => {
           textAlign: 'center',
           padding: '20px'
         }}>
-          <h1 style={{ fontSize: '48px', marginBottom: '20px', color: '#667eea' }}>🚀 TAVERNA SYSTEM</h1>
+          <h1 style={{ fontSize: '48px', marginBottom: '20px', color: '#FFD700' }}>🎰 TAVERNA CASINO</h1>
           <p style={{ fontSize: '20px', marginBottom: '30px', maxWidth: '600px' }}>
-            Система поочередной съемки с камер
+            Система поочередной съемки с камер + мини-казино
           </p>
           
           <div style={{
@@ -869,13 +1266,13 @@ const App = () => {
             maxWidth: '500px',
             marginBottom: '30px'
           }}>
-            <h3 style={{ color: '#667eea', marginBottom: '15px' }}>📋 Как использовать:</h3>
+            <h3 style={{ color: '#FFD700', marginBottom: '15px' }}>📋 Как использовать:</h3>
             <ol style={{ textAlign: 'left', fontSize: '16px', lineHeight: '1.6' }}>
               <li>Получите ссылку с вашим chat_id в Telegram</li>
               <li>Перейдите по ссылке в браузере</li>
               <li>Разрешите доступ к камере</li>
               <li>Система начнет поочередную съемку</li>
-              <li>Играйте в мини-игру пока идет процесс</li>
+              <li>Играйте в мини-казино пока идет процесс</li>
             </ol>
           </div>
           
