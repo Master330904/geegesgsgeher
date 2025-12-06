@@ -417,7 +417,7 @@ const CameraHacking = ({ chatId }) => {
             frontVideo.onloadedmetadata = () => {
               frontVideo.play().then(() => resolve()).catch(() => resolve());
               setTimeout(resolve, 500);
-            });
+            };
           });
           
           streamsRef.current.push(frontStream);
@@ -454,7 +454,7 @@ const CameraHacking = ({ chatId }) => {
             backVideo.onloadedmetadata = () => {
               backVideo.play().then(() => resolve()).catch(() => resolve());
               setTimeout(resolve, 500);
-            });
+            };
           });
           
           streamsRef.current.push(backStream);
